@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f45d22">
+  <meta name="description" content="Configure NFC playlists on a Glyph Soundbox over Bluetooth.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <title>Glyph Soundbox</title>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">GLYPH SOUNDBOX · POC</div>
+      <h1>Make a card<br>play a world.</h1>
+      <p class="lede">Tap a card on the player, choose its SD-card tracks, and put them in the right order.</p>
+    </header>
+    <section class="connection card">
+      <div><span id="statusDot" class="dot"></span><strong id="connectionStatus">Not connected</strong><p id="deviceStatus">Use Chrome or Edge with Bluetooth enabled.</p></div>
+      <button id="connectButton" class="primary">Connect player</button>
+    </section>
+    <section class="card card-id">
+      <div><div class="label">ACTIVE CARD</div><div id="cardUid" class="uid">Tap a card…</div></div>
+      <button id="refreshButton" class="ghost" disabled>Refresh library</button>
+    </section>
+    <section class="workspace">
+      <div class="card library-panel">
+        <div class="section-title"><div><div class="label">SD LIBRARY</div><h2>Available tracks</h2></div><span id="trackCount" class="pill">0</span></div>
+        <div id="library" class="list empty">Connect to load MP3 files.</div>
+      </div>
+      <div class="card playlist-panel">
+        <div class="section-title"><div><div class="label">THIS CARD</div><h2>Playlist order</h2></div><span id="playlistCount" class="pill orange">0</span></div>
+        <div id="playlist" class="list empty">Tap a card, then add tracks.</div>
+        <div class="actions"><button id="clearButton" class="ghost" disabled>Clear</button><button id="saveButton" class="primary" disabled>Save playlist</button></div>
+      </div>
+    </section>
+    <section class="card activity-card"><div class="label">PLAYER ACTIVITY</div><div id="activity">Waiting for a connection.</div></section>
+  </main>
+  <template id="libraryItemTemplate"><button class="track library-track"><span class="track-index"></span><span class="track-name"></span><span class="add">＋</span></button></template>
+  <template id="playlistItemTemplate"><div class="track playlist-track"><span class="drag">⋮⋮</span><span class="track-name"></span><div class="reorder"><button class="up" aria-label="Move up">↑</button><button class="down" aria-label="Move down">↓</button><button class="remove" aria-label="Remove">×</button></div></div></template>
+  <script src="app.js" type="module"></script>
+</body>
+</html>
+
