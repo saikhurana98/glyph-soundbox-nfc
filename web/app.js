@@ -4,6 +4,7 @@ const EVENTS_UUID = "7e400003-b5a3-f393-e0a9-e50e24dcca9e";
 const $ = (selector) => document.querySelector(selector);
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
+const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 let device, commandCharacteristic;
 let tracks = [], mappings = new Map(), cardLabels = new Map();
 let currentUid = "", currentPlaylist = [];
@@ -28,8 +29,10 @@ const log = (direction, message) => {
 
 async function send(command) {
   if (!commandCharacteristic) throw new Error("Player is not connected");
-  await commandCharacteristic.writeValueWithoutResponse(encoder.encode(command));
+  await commandCharacteristic.writeValueWithResponse(encoder.encode(command));
   log("TX>", command);
+  // Keep commands from overtaking multi-notification responses such as TRACKS.
+  await sleep(120);
 }
 
 function setConnected(value) {
@@ -67,8 +70,12 @@ function onEvent(event) {
   log("RX<", message);
   activity(message);
   const [type, ...parts] = message.split("|");
-  if (type === "TRACKS_BEGIN") tracks = [];
-  else if (type === "TRACK") tracks[Number(parts[0])] = parts.slice(1).join("|");
+  if (type === "TRACKS_BEGIN") { tracks = []; renderLibrary(); }
+  else if (type === "TRACK") {
+    tracks[Number(parts[0])] = parts.slice(1).join("|");
+    // Do not depend on TRACKS_END: notifications can occasionally be dropped.
+    renderLibrary();
+  }
   else if (type === "TRACKS_END") renderLibrary();
   else if (type === "MAPS_BEGIN") { mappings = new Map(); cardLabels = new Map(); }
   else if (type === "MAP") {

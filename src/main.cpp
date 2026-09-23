@@ -195,8 +195,12 @@ void sendBle(const String &message) {
   Serial.printf("BLE> %s\n", message.c_str());
   if (!bleConnected || eventsCharacteristic == nullptr) return;
   eventsCharacteristic->setValue(message.c_str());
-  eventsCharacteristic->notify();
-  delay(12);
+  if (!eventsCharacteristic->notify()) {
+    Serial.printf("BLE notify failed: %s\n", message.c_str());
+  }
+  // Allow the browser's BLE stack to drain before replacing the
+  // characteristic value with the next library/mapping record.
+  delay(45);
 }
 
 void sendStatus() {
@@ -241,7 +245,7 @@ void handleBleCommand(String command) {
   command.trim();
   Serial.printf("BLE< %s\n", command.c_str());
   if (command == "HELLO") {
-    sendBle("INFO|Glyph Soundbox|0.2.1");
+    sendBle("INFO|Glyph Soundbox|0.2.2");
   } else if (command == "STATUS") {
     sendStatus();
   } else if (command == "TRACKS") {
@@ -543,7 +547,7 @@ void scanI2c() {
 void setup() {
   Serial.begin(115200);
   delay(3500);  // Leave time for USB CDC and a serial monitor to attach.
-  Serial.println("\n=== Glyph Soundbox NFC + BLE POC 0.2.1 ===");
+  Serial.println("\n=== Glyph Soundbox NFC + BLE POC 0.2.2 ===");
   prefs.begin("yotopoc", false);
   playerMutex = xSemaphoreCreateMutex();
   Wire.setBufferSize(300);
