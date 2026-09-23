@@ -24,6 +24,9 @@ constexpr uint8_t kI2sWs = 18;
 constexpr uint8_t kI2sDout = 15;
 constexpr uint32_t kNfcPollMs = 90;
 constexpr uint32_t kNfcReconnectMs = 2000;
+constexpr uint32_t kNfcCandidateHoldMs = 700;
+constexpr uint32_t kAudioStartNfcQuietMs = 1800;
+constexpr uint8_t kNfcStableReads = 2;
 constexpr size_t kMaxPlaylistTracks = 32;
 
 constexpr char kBleDeviceName[] = "Glyph Soundbox";
@@ -68,6 +71,7 @@ bool cardPlaybackActive = false;
 bool sdReady = false;
 bool nfcReady = false;
 bool bleConnected = false;
+uint32_t nfcQuietUntil = 0;
 
 uint32_t hashUid(const String &uid) {
   uint32_t hash = 2166136261UL;
@@ -237,7 +241,7 @@ void handleBleCommand(String command) {
   command.trim();
   Serial.printf("BLE< %s\n", command.c_str());
   if (command == "HELLO") {
-    sendBle("INFO|Glyph Soundbox|0.2.0");
+    sendBle("INFO|Glyph Soundbox|0.2.1");
   } else if (command == "STATUS") {
     sendStatus();
   } else if (command == "TRACKS") {
@@ -349,6 +353,7 @@ bool playPlaylistPositionLocked(uint8_t position, uint32_t seconds) {
     return false;
   }
   core->play();
+  nfcQuietUntil = millis() + kAudioStartNfcQuietMs;
   trackStartedAt = millis();
   resumeBaseSeconds = seconds;
   if (!seekPlayerToSecondsLocked(seconds)) resumeBaseSeconds = 0;
@@ -431,7 +436,10 @@ void playTrackFromWeb(int trackIndex) {
   player->trackIndex = trackIndex;
   core->stop();
   const bool opened = core->setPath(path.c_str());
-  if (opened) core->play();
+  if (opened) {
+    core->play();
+    nfcQuietUntil = millis() + kAudioStartNfcQuietMs;
+  }
   xSemaphoreGive(playerMutex);
   if (opened) {
     Serial.printf("Web preview: %s\n", path.c_str());
@@ -468,6 +476,9 @@ bool initializeNfc() {
 void pollNfc() {
   static uint32_t lastPollAt = 0;
   static uint32_t lastReconnectAt = 0;
+  static uint32_t candidateLastSeenAt = 0;
+  static String candidateUid;
+  static uint8_t candidateReads = 0;
   const uint32_t now = millis();
   if (!nfcReady) {
     if (now - lastReconnectAt >= kNfcReconnectMs) {
@@ -480,6 +491,9 @@ void pollNfc() {
     }
     return;
   }
+  // The PN532 transaction can take hundreds of milliseconds with no card in
+  // range. Give the MP3 decoder an uninterrupted window to fill its buffers.
+  if (static_cast<int32_t>(now - nfcQuietUntil) < 0) return;
   if (now - lastPollAt < kNfcPollMs) return;
   lastPollAt = now;
   uint8_t uid[10]{};
@@ -487,7 +501,29 @@ void pollNfc() {
   const bool found = nfc.readPassiveTargetID(0x00, uid, &uidLength, 250);
   if (found) {
     const String seenUid = uidToString(uid, uidLength);
-    if (seenUid != activeUid) selectCard(seenUid);
+    if (seenUid == activeUid) {
+      candidateUid = "";
+      candidateReads = 0;
+      return;
+    }
+    if (seenUid == candidateUid && now - candidateLastSeenAt <= kNfcCandidateHoldMs) {
+      ++candidateReads;
+    } else {
+      candidateUid = seenUid;
+      candidateReads = 1;
+    }
+    candidateLastSeenAt = now;
+    if (candidateReads >= kNfcStableReads) {
+      const String confirmedUid = candidateUid;
+      candidateUid = "";
+      candidateReads = 0;
+      Serial.printf("NFC stable read: %s\n", confirmedUid.c_str());
+      selectCard(confirmedUid);
+    }
+  } else if (!candidateUid.isEmpty() &&
+             now - candidateLastSeenAt > kNfcCandidateHoldMs) {
+    candidateUid = "";
+    candidateReads = 0;
   }
 }
 
@@ -507,7 +543,7 @@ void scanI2c() {
 void setup() {
   Serial.begin(115200);
   delay(3500);  // Leave time for USB CDC and a serial monitor to attach.
-  Serial.println("\n=== Glyph Soundbox NFC + BLE POC 0.2.0 ===");
+  Serial.println("\n=== Glyph Soundbox NFC + BLE POC 0.2.1 ===");
   prefs.begin("yotopoc", false);
   playerMutex = xSemaphoreCreateMutex();
   Wire.setBufferSize(300);
