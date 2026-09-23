@@ -36,7 +36,7 @@
 namespace {
 
 constexpr char kTag[] = "glyph";
-constexpr char kVersion[] = "0.6.0-idf";
+constexpr char kVersion[] = "0.7.0-idf";
 constexpr gpio_num_t kI2cSda = GPIO_NUM_4;
 constexpr gpio_num_t kI2cScl = GPIO_NUM_5;
 constexpr gpio_num_t kSdCs = GPIO_NUM_17;
@@ -109,6 +109,7 @@ std::atomic<bool> g_ble_connected{false};
 std::atomic<bool> g_sd_ready{false};
 std::atomic<bool> g_nfc_ready{false};
 std::atomic<TapMode> g_tap_mode{TapMode::kPlayWhilePresent};
+std::atomic<bool> g_resume_enabled{true};
 std::atomic<bool> g_play_after_tap{false};
 std::atomic<uint8_t> g_volume{75};
 std::atomic<uint32_t> g_audio_work_us{0};
@@ -116,6 +117,7 @@ std::atomic<uint32_t> g_audio_pcm_us{0};
 std::atomic<uint32_t> g_audio_max_frame_us{0};
 std::atomic<uint32_t> g_audio_frames{0};
 std::atomic<uint32_t> g_audio_short_writes{0};
+bool g_session_paused = false;
 
 FILE* g_upload_file = nullptr;
 std::string g_upload_name;
@@ -318,6 +320,10 @@ void send_tap_mode() {
            (g_tap_mode == TapMode::kTogglePlayPause ? "toggle" : "presence"));
 }
 
+void send_resume_setting() {
+  send_ble(std::string("RESUME|") + (g_resume_enabled ? "1" : "0"));
+}
+
 void send_performance() {
   const uint32_t work_us = g_audio_work_us.load();
   const uint32_t pcm_us = g_audio_pcm_us.load();
@@ -413,7 +419,8 @@ void advance_playlist() {
     g_playlist_position = (g_playlist_position + 1) % g_active_playlist.count;
   }
   g_resume_base_seconds = 0;
-  if (!g_active_shuffle) save_resume(g_active_uid, g_playlist_position, 0);
+  g_session_paused = false;
+  if (!g_active_shuffle && g_resume_enabled) save_resume(g_active_uid, g_playlist_position, 0);
   const int track = g_active_playlist.tracks[g_playlist_position];
   if (track >= 0 && track < static_cast<int>(g_tracks.size())) {
     play_file(g_tracks[track]);
@@ -582,7 +589,9 @@ void pause_playback() {
   uint32_t elapsed = g_resume_base_seconds;
   if (g_card_playback && !g_active_uid.empty() && !g_active_shuffle) {
     elapsed += static_cast<uint32_t>((esp_timer_get_time() - g_track_started_us) / 1000000);
-    save_resume(g_active_uid, g_playlist_position, elapsed);
+    g_resume_base_seconds = elapsed;
+    g_session_paused = true;
+    if (g_resume_enabled) save_resume(g_active_uid, g_playlist_position, elapsed);
   }
   g_play_after_tap = false;
   g_card_playback = false;
@@ -593,6 +602,8 @@ void pause_playback() {
 
 void select_card(const std::string& uid) {
   if (uid.empty()) return;
+  const bool preserve_session = g_tap_mode == TapMode::kTogglePlayPause &&
+                                uid == g_active_uid && g_session_paused && !g_active_shuffle;
   const bool toggle_pause = g_tap_mode == TapMode::kTogglePlayPause &&
                             uid == g_active_uid && g_card_playback;
   if (g_card_playback) pause_playback();
@@ -600,8 +611,11 @@ void select_card(const std::string& uid) {
   g_active_uid = uid;
   g_active_playlist = load_playlist(uid);
   g_active_shuffle = load_shuffle(uid);
-  g_playlist_position = 0;
-  g_resume_base_seconds = 0;
+  if (!preserve_session && !toggle_pause) {
+    g_playlist_position = 0;
+    g_resume_base_seconds = 0;
+    g_session_paused = false;
+  }
   ESP_LOGI(kTag, "selected %s: %s", card_label(uid).c_str(), uid.c_str());
   send_ble("CARD|" + uid + '|' + card_label(uid));
   if (g_active_playlist.count == 0) send_ble("UNMAPPED|" + uid);
@@ -619,6 +633,7 @@ void select_saved_card(const std::string& uid) {
   g_active_shuffle = load_shuffle(uid);
   g_playlist_position = 0;
   g_resume_base_seconds = 0;
+  g_session_paused = false;
   send_ble("CARD|" + uid + '|' + card_label(uid));
   if (g_active_playlist.count == 0) send_ble("UNMAPPED|" + uid);
 }
@@ -629,11 +644,18 @@ void play_selected_card() {
   g_active_playlist = load_playlist(g_active_uid);
   g_active_shuffle = load_shuffle(g_active_uid);
   if (g_active_playlist.count == 0) return send_ble("ERROR|MAP_A_PLAYLIST");
-  ResumeState resume = g_active_shuffle ? ResumeState{} : load_resume(g_active_uid);
+  ResumeState resume;
+  if (g_session_paused && !g_active_shuffle) {
+    resume.playlist_position = g_playlist_position;
+    resume.seconds = g_resume_base_seconds;
+  } else if (!g_active_shuffle && g_resume_enabled) {
+    resume = load_resume(g_active_uid);
+  }
   if (resume.playlist_position >= g_active_playlist.count) resume = {};
   if (g_active_shuffle) resume.playlist_position = esp_random() % g_active_playlist.count;
   g_playlist_position = resume.playlist_position;
   g_resume_base_seconds = resume.seconds;
+  g_session_paused = false;
   const int track = g_active_playlist.tracks[g_playlist_position];
   if (track >= static_cast<int>(g_tracks.size())) return send_ble("ERROR|TRACK_INDEX");
   g_card_playback = true;
@@ -647,6 +669,7 @@ void play_track(int index) {
   if (index < 0 || index >= static_cast<int>(g_tracks.size())) return send_ble("ERROR|TRACK_INDEX");
   g_play_after_tap = false;
   g_card_playback = false;
+  g_session_paused = false;
   play_file(g_tracks[index]);
   send_ble("PLAYING_TRACK|" + std::to_string(index));
 }
@@ -707,6 +730,8 @@ void handle_command(std::string command) {
     send_volume();
   } else if (command == "TAP_MODE") {
     send_tap_mode();
+  } else if (command == "RESUME") {
+    send_resume_setting();
   } else if (command == "PERF") {
     send_performance();
   } else if (starts_with(command, "VOLUME|")) {
@@ -728,6 +753,13 @@ void handle_command(std::string command) {
     nvs_set_u8(g_nvs, "tap_mode", static_cast<uint8_t>(g_tap_mode.load()));
     nvs_commit(g_nvs);
     send_tap_mode();
+  } else if (starts_with(command, "RESUME|")) {
+    const std::string value = command.substr(7);
+    if (value != "0" && value != "1") return send_ble("ERROR|RESUME_VALUE");
+    g_resume_enabled = value == "1";
+    nvs_set_u8(g_nvs, "resume", g_resume_enabled ? 1 : 0);
+    nvs_commit(g_nvs);
+    send_resume_setting();
   } else if (starts_with(command, "UPLOAD_BEGIN|")) {
     const size_t pipe = command.find_last_of('|');
     if (pipe <= 13) return send_ble("ERROR|UPLOAD_FORMAT");
@@ -1070,6 +1102,10 @@ extern "C" void app_main() {
   uint8_t saved_tap_mode = 0;
   if (nvs_get_u8(g_nvs, "tap_mode", &saved_tap_mode) == ESP_OK && saved_tap_mode <= 1) {
     g_tap_mode = static_cast<TapMode>(saved_tap_mode);
+  }
+  uint8_t saved_resume = 1;
+  if (nvs_get_u8(g_nvs, "resume", &saved_resume) == ESP_OK && saved_resume <= 1) {
+    g_resume_enabled = saved_resume != 0;
   }
 
   g_audio_queue = xQueueCreate(1, sizeof(AudioRequest));

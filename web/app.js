@@ -142,7 +142,7 @@ async function connect() {
   setConnected(true);
   $("#deviceStatus").textContent = device.name || "Glyph Soundbox";
   activity("Connected. Loading cards and SD tracks…");
-  for (const command of ["HELLO", "STATUS", "VOLUME", "TAP_MODE", "PERF", "TRACKS", "MAPS"]) await send(command);
+  for (const command of ["HELLO", "STATUS", "VOLUME", "TAP_MODE", "RESUME", "PERF", "TRACKS", "MAPS"]) await send(command);
 }
 
 function csvToPlaylist(csv) {
@@ -221,6 +221,9 @@ function onEvent(event) {
   } else if (type === "TAP_MODE") {
     $("#tapMode").value = parts[0] === "toggle" ? "toggle" : "presence";
     renderTapModeHelp();
+  } else if (type === "RESUME") {
+    $("#resumeToggle").checked = parts[0] === "1";
+    activity(`Resume checkpoints ${parts[0] === "1" ? "enabled" : "disabled"}.`);
   } else if (type === "PERF") {
     const load = (Number(parts[0]) / 10).toFixed(1);
     $("#performance").textContent = `Audio load: ${load}% · max frame ${parts[1]} µs · ${parts[2]} short writes`;
@@ -306,6 +309,7 @@ function updateActions() {
   $("#playButton").disabled = !online || uploadBusy || !currentUid || !currentPlaylist.length;
   $("#pauseButton").disabled = !online || uploadBusy;
   $("#tapMode").disabled = !online || uploadBusy;
+  $("#resumeToggle").disabled = !online || uploadBusy;
   $("#volumeSlider").disabled = !online || uploadBusy;
   $("#uploadButton").disabled = !online || uploadBusy || !$("#uploadInput").files.length;
   $("#cardNameInput").disabled = !online || uploadBusy || !currentUid;
@@ -327,6 +331,7 @@ $("#pauseButton").addEventListener("click", async () => {
 $("#volumeSlider").addEventListener("input", (event) => { $("#volumeValue").value = `${event.target.value}%`; });
 $("#volumeSlider").addEventListener("change", (event) => send(`VOLUME|${event.target.value}`).catch((error) => activity(error.message)));
 $("#tapMode").addEventListener("change", (event) => { renderTapModeHelp(); send(`TAP_MODE|${event.target.value}`).catch((error) => activity(error.message)); });
+$("#resumeToggle").addEventListener("change", (event) => send(`RESUME|${event.target.checked ? 1 : 0}`).catch((error) => activity(error.message)));
 $("#cardNameInput").addEventListener("input", updateActions);
 $("#renameButton").addEventListener("click", () => {
   const name = $("#cardNameInput").value.trim().replaceAll("|", " ");
