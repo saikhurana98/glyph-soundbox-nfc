@@ -54,6 +54,9 @@ contains no spaces.
 The app lives in [`web/`](web/) and is published at
 [saikhurana98.github.io/glyph-soundbox-nfc](https://saikhurana98.github.io/glyph-soundbox-nfc/).
 Open it in Chrome or Edge, connect, tap a card, choose tracks, reorder them, and save.
+The PWA is branded as **Project 0 · Foundry Series · Alpha** for Polaris School of
+Technology. The embedded Polaris mark is sourced from the official
+[`polariscampus.com`](https://polariscampus.com/) favicon.
 
 Web Bluetooth is not supported by Safari on iPhone/iPad. An iOS-native wrapper is outside this POC.
 

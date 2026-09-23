@@ -1,2 +1,1 @@
-{"name":"Glyph Soundbox","short_name":"Soundbox","description":"Map NFC cards to playlists on a PCB Cupid Glyph Soundbox.","start_url":"./","display":"standalone","background_color":"#f6f0e7","theme_color":"#f45d22","icons":[{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
-
+{"name":"Project 0 · Foundry Series","short_name":"Project 0","description":"A Polaris School of Technology Foundry Series project for mapping NFC cards to music.","start_url":"./","display":"standalone","background_color":"#f6f0e7","theme_color":"#f45d22","icons":[{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
