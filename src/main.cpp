@@ -28,6 +28,7 @@ constexpr uint32_t kNfcCandidateHoldMs = 700;
 constexpr uint32_t kAudioStartNfcQuietMs = 1800;
 constexpr uint8_t kNfcStableReads = 2;
 constexpr size_t kMaxPlaylistTracks = 32;
+constexpr char kTapTrackName[] = "try-me.mp3";
 
 constexpr char kBleDeviceName[] = "Glyph Soundbox";
 constexpr char kServiceUuid[] = "7e400001-b5a3-f393-e0a9-e50e24dcca9e";
@@ -68,6 +69,7 @@ struct ResumeState {
 };
 
 String activeUid;
+String presentUid;
 Playlist activePlaylist;
 uint8_t activePlaylistPosition = 0;
 uint32_t resumeBaseSeconds = 0;
@@ -250,7 +252,7 @@ void handleBleCommand(String command) {
   command.trim();
   Serial.printf("BLE< %s\n", command.c_str());
   if (command == "HELLO") {
-    sendBle("INFO|Glyph Soundbox|0.2.3");
+    sendBle("INFO|Glyph Soundbox|0.2.4");
   } else if (command == "STATUS") {
     sendStatus();
   } else if (command == "TRACKS") {
@@ -417,6 +419,24 @@ void selectCard(const String &uid) {
   Serial.printf("Selected %s: %s\n", cardLabel(uid).c_str(), uid.c_str());
   sendBle("CARD|" + uid + '|' + cardLabel(uid));
   if (activePlaylist.count == 0) sendBle("UNMAPPED|" + uid);
+
+  int tapTrack = -1;
+  for (int i = 0; i < player->trackCount(); ++i) {
+    String path = player->getTrackNameAt(i);
+    while (path.startsWith("//")) path.remove(0, 1);
+    const int slash = path.lastIndexOf('/');
+    if (path.substring(slash + 1).equalsIgnoreCase(kTapTrackName)) {
+      tapTrack = i;
+      break;
+    }
+  }
+  if (tapTrack >= 0) {
+    Serial.printf("Card tap sound: %s\n", kTapTrackName);
+    playTrackFromWeb(tapTrack);
+  } else {
+    Serial.printf("ERROR: card tap sound not found: %s\n", kTapTrackName);
+    sendBle("ERROR|TAP_TRACK_NOT_FOUND");
+  }
 }
 
 void playSelectedCard() {
@@ -491,6 +511,7 @@ void pollNfc() {
   static uint32_t lastPollAt = 0;
   static uint32_t lastReconnectAt = 0;
   static uint32_t candidateLastSeenAt = 0;
+  static uint32_t presentLastSeenAt = 0;
   static String candidateUid;
   static uint8_t candidateReads = 0;
   const uint32_t now = millis();
@@ -515,7 +536,8 @@ void pollNfc() {
   const bool found = nfc.readPassiveTargetID(0x00, uid, &uidLength, 250);
   if (found) {
     const String seenUid = uidToString(uid, uidLength);
-    if (seenUid == activeUid) {
+    presentLastSeenAt = now;
+    if (seenUid == presentUid) {
       candidateUid = "";
       candidateReads = 0;
       return;
@@ -531,13 +553,19 @@ void pollNfc() {
       const String confirmedUid = candidateUid;
       candidateUid = "";
       candidateReads = 0;
+      presentUid = confirmedUid;
       Serial.printf("NFC stable read: %s\n", confirmedUid.c_str());
       selectCard(confirmedUid);
     }
-  } else if (!candidateUid.isEmpty() &&
-             now - candidateLastSeenAt > kNfcCandidateHoldMs) {
-    candidateUid = "";
-    candidateReads = 0;
+  } else {
+    if (!candidateUid.isEmpty() && now - candidateLastSeenAt > kNfcCandidateHoldMs) {
+      candidateUid = "";
+      candidateReads = 0;
+    }
+    if (!presentUid.isEmpty() && now - presentLastSeenAt > kNfcCandidateHoldMs) {
+      Serial.printf("NFC card removed: %s\n", presentUid.c_str());
+      presentUid = "";
+    }
   }
 }
 
@@ -557,7 +585,7 @@ void scanI2c() {
 void setup() {
   Serial.begin(115200);
   delay(3500);  // Leave time for USB CDC and a serial monitor to attach.
-  Serial.println("\n=== Glyph Soundbox NFC + BLE POC 0.2.3 ===");
+  Serial.println("\n=== Glyph Soundbox NFC + BLE POC 0.2.4 ===");
   prefs.begin("yotopoc", false);
   playerMutex = xSemaphoreCreateMutex();
   bleCommandQueue = xQueueCreate(8, sizeof(BleCommand));
