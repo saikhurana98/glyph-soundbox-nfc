@@ -6,7 +6,7 @@ const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 let device, commandCharacteristic;
-let tracks = [], mappings = new Map(), cardLabels = new Map();
+let tracks = [], mappings = new Map(), cardLabels = new Map(), cardShuffles = new Map();
 let currentUid = "", currentPlaylist = [];
 let uploadBusy = false;
 const messageWaiters = [];
@@ -142,7 +142,7 @@ async function connect() {
   setConnected(true);
   $("#deviceStatus").textContent = device.name || "Glyph Soundbox";
   activity("Connected. Loading cards and SD tracks…");
-  for (const command of ["HELLO", "STATUS", "VOLUME", "AUTOPLAY", "PERF", "TRACKS", "MAPS"]) await send(command);
+  for (const command of ["HELLO", "STATUS", "VOLUME", "TAP_MODE", "PERF", "TRACKS", "MAPS"]) await send(command);
 }
 
 function csvToPlaylist(csv) {
@@ -169,10 +169,11 @@ function onEvent(event) {
     renderLibrary();
   }
   else if (type === "TRACKS_END") renderLibrary();
-  else if (type === "MAPS_BEGIN") { mappings = new Map(); cardLabels = new Map(); }
+  else if (type === "MAPS_BEGIN") { mappings = new Map(); cardLabels = new Map(); cardShuffles = new Map(); }
   else if (type === "MAP") {
     mappings.set(parts[0], csvToPlaylist(parts[1] || ""));
     cardLabels.set(parts[0], parts[2] || `Card ${cardLabels.size + 1}`);
+    cardShuffles.set(parts[0], parts[3] === "1");
     renderCards();
   } else if (type === "MAPS_END") {
     renderCards();
@@ -180,14 +181,22 @@ function onEvent(event) {
   } else if (type === "CARD") {
     if (!mappings.has(parts[0])) mappings.set(parts[0], []);
     if (!cardLabels.has(parts[0])) cardLabels.set(parts[0], parts[1] || `Card ${cardLabels.size + 1}`);
+    if (!cardShuffles.has(parts[0])) cardShuffles.set(parts[0], false);
     renderCards(); selectCard(parts[0], false);
   } else if (type === "SAVED") {
     mappings.set(parts[0], csvToPlaylist(parts[1] || ""));
+    cardShuffles.set(parts[0], parts[2] === "1");
     selectCard(parts[0], false);
     activity(`Playlist saved for ${cardLabels.get(parts[0]) || prettyUid(parts[0])}.`);
+  } else if (type === "RENAMED") {
+    cardLabels.set(parts[0], parts.slice(1).join("|"));
+    renderCards();
+    if (currentUid === parts[0]) selectCard(parts[0], false);
+    activity(`Card renamed to ${cardLabels.get(parts[0])}.`);
   } else if (type === "CLEARED") {
     mappings.set(parts[0], []);
-    if (currentUid === parts[0]) currentPlaylist = [];
+    cardShuffles.set(parts[0], false);
+    if (currentUid === parts[0]) { currentPlaylist = []; $("#shuffleToggle").checked = false; }
     renderPlaylist();
   } else if (type === "PLAYING") {
     $("#nowPlaying").textContent = `${cardLabels.get(parts[0]) || "Card"}: ${humanTitle(tracks[Number(parts[2])] || "Track")}`;
@@ -205,8 +214,9 @@ function onEvent(event) {
     const volume = Math.max(0, Math.min(100, Number(parts[0]) || 0));
     $("#volumeSlider").value = volume;
     $("#volumeValue").value = `${volume}%`;
-  } else if (type === "AUTOPLAY") {
-    $("#autoplayToggle").checked = parts[0] === "1";
+  } else if (type === "TAP_MODE") {
+    $("#tapMode").value = parts[0] === "toggle" ? "toggle" : "presence";
+    renderTapModeHelp();
   } else if (type === "PERF") {
     const load = (Number(parts[0]) / 10).toFixed(1);
     $("#performance").textContent = `Audio load: ${load}% · max frame ${parts[1]} µs · ${parts[2]} short writes`;
@@ -217,7 +227,7 @@ function onEvent(event) {
 function renderCards() {
   const select = $("#cardSelect"), selected = currentUid;
   select.replaceChildren(new Option("Choose a saved card…", ""));
-  for (const [uid] of mappings) select.add(new Option(`${cardLabels.get(uid) || "Card"} — ${prettyUid(uid)}`, uid));
+  for (const [uid] of mappings) select.add(new Option(cardLabels.get(uid) || "Unnamed card", uid));
   select.disabled = !connected() || mappings.size === 0;
   if (selected && mappings.has(selected)) select.value = selected;
 }
@@ -226,7 +236,9 @@ function selectCard(uid, notifyPlayer = true) {
   currentUid = uid;
   currentPlaylist = [...(mappings.get(uid) || [])].filter((index) => tracks[index] != null);
   $("#cardSelect").value = uid;
-  $("#cardUid").textContent = `${cardLabels.get(uid) || "Card"} · ${prettyUid(uid)}`;
+  $("#cardNameInput").value = cardLabels.get(uid) || "";
+  $("#cardUid").textContent = `Card ID · ${prettyUid(uid)}`;
+  $("#shuffleToggle").checked = cardShuffles.get(uid) === true;
   renderPlaylist();
   if (notifyPlayer) send(`SELECT|${uid}`).catch((error) => activity(error.message));
 }
@@ -277,15 +289,24 @@ function move(position, offset) {
   renderPlaylist();
 }
 
+function renderTapModeHelp() {
+  $("#tapModeHelp").textContent = $("#tapMode").value === "toggle"
+    ? "Tap once to play, again to pause or resume. Card removal has no effect."
+    : "Playback continues only while the card remains on the reader.";
+}
+
 function updateActions() {
   const online = connected();
   $("#saveButton").disabled = !online || uploadBusy || !currentUid || !currentPlaylist.length;
   $("#clearButton").disabled = !online || uploadBusy || !currentUid;
   $("#playButton").disabled = !online || uploadBusy || !currentUid || !currentPlaylist.length;
   $("#pauseButton").disabled = !online || uploadBusy;
-  $("#autoplayToggle").disabled = !online || uploadBusy;
+  $("#tapMode").disabled = !online || uploadBusy;
   $("#volumeSlider").disabled = !online || uploadBusy;
   $("#uploadButton").disabled = !online || uploadBusy || !$("#uploadInput").files.length;
+  $("#cardNameInput").disabled = !online || uploadBusy || !currentUid;
+  $("#renameButton").disabled = !online || uploadBusy || !currentUid || !$("#cardNameInput").value.trim();
+  $("#shuffleToggle").disabled = !online || uploadBusy || !currentUid;
 }
 
 $("#connectButton").addEventListener("click", () => connect().catch((error) => activity(error.message)));
@@ -301,8 +322,13 @@ $("#pauseButton").addEventListener("click", async () => {
 });
 $("#volumeSlider").addEventListener("input", (event) => { $("#volumeValue").value = `${event.target.value}%`; });
 $("#volumeSlider").addEventListener("change", (event) => send(`VOLUME|${event.target.value}`).catch((error) => activity(error.message)));
-$("#autoplayToggle").addEventListener("change", (event) => send(`AUTOPLAY|${event.target.checked ? 1 : 0}`).catch((error) => activity(error.message)));
-$("#saveButton").addEventListener("click", () => send(`MAP|${currentUid}|${currentPlaylist.join(",")}`).catch((error) => activity(error.message)));
+$("#tapMode").addEventListener("change", (event) => { renderTapModeHelp(); send(`TAP_MODE|${event.target.value}`).catch((error) => activity(error.message)); });
+$("#cardNameInput").addEventListener("input", updateActions);
+$("#renameButton").addEventListener("click", () => {
+  const name = $("#cardNameInput").value.trim().replaceAll("|", " ");
+  if (name) send(`RENAME|${currentUid}|${name}`).catch((error) => activity(error.message));
+});
+$("#saveButton").addEventListener("click", () => send(`MAP|${currentUid}|${currentPlaylist.join(",")}|${$("#shuffleToggle").checked ? 1 : 0}`).catch((error) => activity(error.message)));
 $("#clearButton").addEventListener("click", () => send(`CLEAR|${currentUid}`).catch((error) => activity(error.message)));
 $("#uploadInput").addEventListener("change", () => {
   const count = $("#uploadInput").files.length;
