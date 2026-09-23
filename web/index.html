@@ -7,7 +7,7 @@
   <meta name="description" content="Configure NFC playlists on a Glyph Soundbox over Bluetooth.">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=17">
+  <link rel="stylesheet" href="styles.css?v=18">
   <title>Glyph Soundbox</title>
 </head>
 <body>
@@ -46,6 +46,14 @@
         <div class="actions"><button id="clearButton" class="ghost" disabled>Clear</button><button id="saveButton" class="primary" disabled>Save playlist</button></div>
       </div>
     </section>
+    <section class="card data-controls">
+      <div><div class="label">DATA CONTROLS</div><h2>Reset saved player data</h2><p>These actions affect settings stored on the player. Music files on the SD card are never deleted.</p></div>
+      <div class="data-actions">
+        <button id="clearCheckpointsButton" class="ghost" disabled>Clear checkpoints</button>
+        <button id="clearMappingsButton" class="ghost" disabled>Clear playlist mappings</button>
+        <button id="clearUserDataButton" class="danger" disabled>Clear all user data</button>
+      </div>
+    </section>
     <section class="card activity-card">
       <div class="log-heading"><div><div class="label">LIVE DEVICE LOG</div><div id="activity">Waiting for a connection.</div></div><button id="clearLogButton" class="ghost">Clear log</button></div>
       <pre id="serialLog" aria-live="polite">Open the Bluetooth connection to begin.</pre>
@@ -53,6 +61,6 @@
   </main>
   <template id="libraryItemTemplate"><div class="track library-track"><span class="track-index"></span><span class="track-name"></span><div class="track-actions"><button class="preview" aria-label="Play track">▶</button><button class="add" aria-label="Add to playlist">＋</button></div></div></template>
   <template id="playlistItemTemplate"><div class="track playlist-track"><span class="drag">⋮⋮</span><span class="track-name"></span><div class="reorder"><button class="up" aria-label="Move up">↑</button><button class="down" aria-label="Move down">↓</button><button class="remove" aria-label="Remove">×</button></div></div></template>
-  <script src="app.js?v=17" type="module"></script>
+  <script src="app.js?v=18" type="module"></script>
 </body>
 </html>

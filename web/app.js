@@ -142,6 +142,22 @@ function onEvent(event) {
     cardShuffles.set(parts[0], false);
     if (currentUid === parts[0]) { currentPlaylist = []; $("#shuffleToggle").checked = false; }
     renderPlaylist();
+  } else if (type === "CLEARED_CHECKPOINTS") {
+    activity("All playback checkpoints cleared.");
+  } else if (type === "CLEARED_MAPPINGS") {
+    for (const uid of mappings.keys()) mappings.set(uid, []);
+    currentPlaylist = [];
+    renderPlaylist();
+    activity("All playlist mappings cleared.");
+  } else if (type === "CLEARED_USER_DATA") {
+    mappings = new Map(); cardLabels = new Map(); cardShuffles = new Map();
+    currentUid = ""; currentPlaylist = [];
+    renderCards(); renderPlaylist();
+    $("#cardNameInput").value = "";
+    $("#shuffleToggle").checked = false;
+    scrollingText($("#cardUid"), "No card selected");
+    scrollingText($("#nowPlaying"), "Nothing playing");
+    activity("All user data cleared. SD card music was kept.");
   } else if (type === "PLAYING") {
     scrollingText($("#nowPlaying"), `${cardLabels.get(parts[0]) || "Card"}: ${humanTitle(tracks[Number(parts[2])] || "Track")}`);
   } else if (type === "PLAYING_TRACK") {
@@ -252,6 +268,13 @@ function updateActions() {
   $("#cardNameInput").disabled = !online || !currentUid;
   $("#renameButton").disabled = !online || !currentUid || !$("#cardNameInput").value.trim();
   $("#shuffleToggle").disabled = !online || !currentUid;
+  $("#clearCheckpointsButton").disabled = !online;
+  $("#clearMappingsButton").disabled = !online;
+  $("#clearUserDataButton").disabled = !online;
+}
+
+function confirmAndSend(message, command) {
+  if (window.confirm(message)) send(command).catch((error) => activity(error.message));
 }
 
 $("#connectButton").addEventListener("click", () => connect().catch((error) => activity(error.message)));
@@ -277,6 +300,18 @@ $("#renameButton").addEventListener("click", () => {
 $("#shuffleToggle").addEventListener("change", (event) => send(`SHUFFLE|${currentUid}|${event.target.checked ? 1 : 0}`).catch((error) => activity(error.message)));
 $("#saveButton").addEventListener("click", () => send(`MAP|${currentUid}|${currentPlaylist.join(",")}|${$("#shuffleToggle").checked ? 1 : 0}`).catch((error) => activity(error.message)));
 $("#clearButton").addEventListener("click", () => send(`CLEAR|${currentUid}`).catch((error) => activity(error.message)));
+$("#clearCheckpointsButton").addEventListener("click", () => confirmAndSend(
+  "Clear every saved playback checkpoint? Playlists and card names will be kept.",
+  "CLEAR_CHECKPOINTS"
+));
+$("#clearMappingsButton").addEventListener("click", () => confirmAndSend(
+  "Clear every card-to-playlist mapping? Card names, settings, and SD card music will be kept.",
+  "CLEAR_MAPPINGS"
+));
+$("#clearUserDataButton").addEventListener("click", () => confirmAndSend(
+  "Clear ALL user data from the player? This resets cards, mappings, checkpoints, names, and preferences. SD card music will be kept.",
+  "CLEAR_USER_DATA"
+));
 $("#clearLogButton").addEventListener("click", () => { logLines.length = 0; $("#serialLog").textContent = "Log cleared."; });
 scrollingText($("#nowPlaying"), "Nothing playing");
 scrollingText($("#cardUid"), "No card selected");

@@ -36,7 +36,7 @@
 namespace {
 
 constexpr char kTag[] = "glyph";
-constexpr char kVersion[] = "0.7.0-idf";
+constexpr char kVersion[] = "0.8.0-idf";
 constexpr gpio_num_t kI2cSda = GPIO_NUM_4;
 constexpr gpio_num_t kI2cScl = GPIO_NUM_5;
 constexpr gpio_num_t kSdCs = GPIO_NUM_17;
@@ -674,6 +674,26 @@ void play_track(int index) {
   send_ble("PLAYING_TRACK|" + std::to_string(index));
 }
 
+void stop_and_clear_active_playlist(bool forget_card) {
+  g_play_after_tap = false;
+  g_card_playback = false;
+  g_session_paused = false;
+  stop_audio();
+  g_active_playlist = {};
+  g_active_shuffle = false;
+  g_playlist_position = 0;
+  g_resume_base_seconds = 0;
+  if (forget_card) {
+    g_active_uid.clear();
+  }
+}
+
+void erase_card_keys(char prefix) {
+  for (const auto& uid : split(nvs_get_string("uids"), ',')) {
+    if (!uid.empty()) nvs_erase_key(g_nvs, preference_key(prefix, uid).c_str());
+  }
+}
+
 void finish_upload() {
   if (!g_upload_active || !g_upload_file) return send_ble("ERROR|NO_UPLOAD");
   std::fflush(g_upload_file);
@@ -838,6 +858,28 @@ void handle_command(std::string command) {
     save_shuffle(uid, shuffle);
     if (uid == g_active_uid) g_active_shuffle = shuffle;
     send_ble("SHUFFLE|" + uid + '|' + value);
+  } else if (command == "CLEAR_CHECKPOINTS") {
+    erase_card_keys('r');
+    nvs_commit(g_nvs);
+    g_session_paused = false;
+    g_resume_base_seconds = 0;
+    send_ble("CLEARED_CHECKPOINTS");
+  } else if (command == "CLEAR_MAPPINGS") {
+    stop_and_clear_active_playlist(false);
+    erase_card_keys('m');
+    nvs_commit(g_nvs);
+    send_ble("CLEARED_MAPPINGS");
+  } else if (command == "CLEAR_USER_DATA") {
+    stop_and_clear_active_playlist(true);
+    nvs_erase_all(g_nvs);
+    nvs_commit(g_nvs);
+    g_tap_mode = TapMode::kPlayWhilePresent;
+    g_resume_enabled = true;
+    g_volume = 75;
+    send_tap_mode();
+    send_resume_setting();
+    send_volume();
+    send_ble("CLEARED_USER_DATA");
   } else if (starts_with(command, "CLEAR|")) {
     const std::string uid = upper(command.substr(6));
     nvs_erase_key(g_nvs, preference_key('m', uid).c_str());

@@ -59,7 +59,7 @@ Web Bluetooth is not supported by Safari on iPhone/iPad. An iOS-native wrapper i
 
 ## BLE protocol
 
-Service `7e400001-b5a3-f393-e0a9-e50e24dcca9e` has a write command characteristic and notify event characteristic. Messages are pipe-delimited UTF-8 strings such as `TRACKS`, `MAP|UID|0,2,1|1`, `SHUFFLE|UID|1`, `RENAME|UID|Story Card`, `TAP_MODE|presence`, `RESUME|1`, `CARD|UID`, `VOLUME|75`, `PERF`, and `PLAYING|UID|position|track|seconds`. MP3 uploads use `UPLOAD_BEGIN`, binary chunks, periodic `UPLOAD_SYNC`/`UPLOAD_ACK` checkpoints, and `UPLOAD_END`.
+Service `7e400001-b5a3-f393-e0a9-e50e24dcca9e` has a write command characteristic and notify event characteristic. Messages are pipe-delimited UTF-8 strings such as `TRACKS`, `MAP|UID|0,2,1|1`, `SHUFFLE|UID|1`, `RENAME|UID|Story Card`, `TAP_MODE|presence`, `RESUME|1`, `CLEAR_CHECKPOINTS`, `CLEAR_MAPPINGS`, `CLEAR_USER_DATA`, `CARD|UID`, `VOLUME|75`, `PERF`, and `PLAYING|UID|position|track|seconds`. MP3 uploads use `UPLOAD_BEGIN`, binary chunks, periodic `UPLOAD_SYNC`/`UPLOAD_ACK` checkpoints, and `UPLOAD_END`.
 
 ## Credits
 
