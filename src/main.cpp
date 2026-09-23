@@ -794,6 +794,18 @@ void handle_command(std::string command) {
     if (!uid_known(uid) || name.empty() || name.size() > 48) return send_ble("ERROR|CARD_NAME");
     nvs_set_string(preference_key('n', uid).c_str(), name);
     send_ble("RENAMED|" + uid + '|' + name);
+  } else if (starts_with(command, "SHUFFLE|")) {
+    const size_t pipe = command.find('|', 8);
+    if (pipe == std::string::npos) return send_ble("ERROR|SHUFFLE_FORMAT");
+    const std::string uid = upper(command.substr(8, pipe - 8));
+    const std::string value = command.substr(pipe + 1);
+    if (!uid_known(uid) || (value != "0" && value != "1")) {
+      return send_ble("ERROR|SHUFFLE_VALUE");
+    }
+    const bool shuffle = value == "1";
+    save_shuffle(uid, shuffle);
+    if (uid == g_active_uid) g_active_shuffle = shuffle;
+    send_ble("SHUFFLE|" + uid + '|' + value);
   } else if (starts_with(command, "CLEAR|")) {
     const std::string uid = upper(command.substr(6));
     nvs_erase_key(g_nvs, preference_key('m', uid).c_str());
@@ -995,7 +1007,14 @@ void init_sd() {
   // Start conservatively: this board's long shared rail is reliable at 4 MHz.
   // Playback remains DMA-fed and MP3 bitrates are far below this bus rate.
   host.max_freq_khz = 4000;
-  const esp_err_t result = esp_vfs_fat_sdspi_mount("/sdcard", &host, &slot, &mount, &g_sd_card);
+  esp_err_t result = ESP_FAIL;
+  for (int attempt = 1; attempt <= 8; ++attempt) {
+    g_sd_card = nullptr;
+    result = esp_vfs_fat_sdspi_mount("/sdcard", &host, &slot, &mount, &g_sd_card);
+    if (result == ESP_OK) break;
+    ESP_LOGW(kTag, "SD mount attempt %d failed: %s", attempt, esp_err_to_name(result));
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
   g_sd_ready = result == ESP_OK;
   if (!g_sd_ready) {
     ESP_LOGE(kTag, "SD mount failed: %s", esp_err_to_name(result));

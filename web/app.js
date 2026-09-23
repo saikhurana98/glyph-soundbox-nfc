@@ -193,6 +193,10 @@ function onEvent(event) {
     renderCards();
     if (currentUid === parts[0]) selectCard(parts[0], false);
     activity(`Card renamed to ${cardLabels.get(parts[0])}.`);
+  } else if (type === "SHUFFLE") {
+    cardShuffles.set(parts[0], parts[1] === "1");
+    if (currentUid === parts[0]) $("#shuffleToggle").checked = parts[1] === "1";
+    activity(`Shuffle ${parts[1] === "1" ? "enabled" : "disabled"} for ${cardLabels.get(parts[0]) || prettyUid(parts[0])}.`);
   } else if (type === "CLEARED") {
     mappings.set(parts[0], []);
     cardShuffles.set(parts[0], false);
@@ -328,6 +332,7 @@ $("#renameButton").addEventListener("click", () => {
   const name = $("#cardNameInput").value.trim().replaceAll("|", " ");
   if (name) send(`RENAME|${currentUid}|${name}`).catch((error) => activity(error.message));
 });
+$("#shuffleToggle").addEventListener("change", (event) => send(`SHUFFLE|${currentUid}|${event.target.checked ? 1 : 0}`).catch((error) => activity(error.message)));
 $("#saveButton").addEventListener("click", () => send(`MAP|${currentUid}|${currentPlaylist.join(",")}|${$("#shuffleToggle").checked ? 1 : 0}`).catch((error) => activity(error.message)));
 $("#clearButton").addEventListener("click", () => send(`CLEAR|${currentUid}`).catch((error) => activity(error.message)));
 $("#uploadInput").addEventListener("change", () => {
