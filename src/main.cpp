@@ -51,6 +51,11 @@ Pn532Mini nfc(Wire);
 Preferences prefs;
 NimBLECharacteristic *eventsCharacteristic = nullptr;
 SemaphoreHandle_t playerMutex = nullptr;
+QueueHandle_t bleCommandQueue = nullptr;
+
+struct BleCommand {
+  char text[160]{};
+};
 
 struct Playlist {
   uint16_t tracks[kMaxPlaylistTracks]{};
@@ -245,7 +250,7 @@ void handleBleCommand(String command) {
   command.trim();
   Serial.printf("BLE< %s\n", command.c_str());
   if (command == "HELLO") {
-    sendBle("INFO|Glyph Soundbox|0.2.2");
+    sendBle("INFO|Glyph Soundbox|0.2.3");
   } else if (command == "STATUS") {
     sendStatus();
   } else if (command == "TRACKS") {
@@ -297,7 +302,12 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 
 class CommandCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *characteristic, NimBLEConnInfo &) override {
-    handleBleCommand(String(characteristic->getValue().c_str()));
+    if (bleCommandQueue == nullptr) return;
+    BleCommand command;
+    strlcpy(command.text, characteristic->getValue().c_str(), sizeof(command.text));
+    if (xQueueSend(bleCommandQueue, &command, 0) != pdPASS) {
+      Serial.println("BLE command queue full");
+    }
   }
 };
 
@@ -547,9 +557,10 @@ void scanI2c() {
 void setup() {
   Serial.begin(115200);
   delay(3500);  // Leave time for USB CDC and a serial monitor to attach.
-  Serial.println("\n=== Glyph Soundbox NFC + BLE POC 0.2.2 ===");
+  Serial.println("\n=== Glyph Soundbox NFC + BLE POC 0.2.3 ===");
   prefs.begin("yotopoc", false);
   playerMutex = xSemaphoreCreateMutex();
+  bleCommandQueue = xQueueCreate(8, sizeof(BleCommand));
   Wire.setBufferSize(300);
   Wire.begin(kI2cSda, kI2cScl, 100000);
   nfc.begin();
@@ -582,6 +593,11 @@ void setup() {
 }
 
 void loop() {
+  BleCommand command;
+  if (bleCommandQueue != nullptr &&
+      xQueueReceive(bleCommandQueue, &command, 0) == pdPASS) {
+    handleBleCommand(String(command.text));
+  }
   pollNfc();
   delay(2);
 }
