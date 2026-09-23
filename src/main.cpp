@@ -63,6 +63,7 @@ String activeUid;
 Playlist activePlaylist;
 uint8_t activePlaylistPosition = 0;
 uint32_t resumeBaseSeconds = 0;
+uint32_t trackStartedAt = 0;
 uint32_t lastCardSeenAt = 0;
 bool cardPlaybackActive = false;
 bool sdReady = false;
@@ -314,7 +315,18 @@ bool playPlaylistPositionLocked(uint8_t position, uint32_t seconds) {
   if (activePlaylist.count == 0) return false;
   activePlaylistPosition = position % activePlaylist.count;
   const int globalTrack = activePlaylist.tracks[activePlaylistPosition];
-  if (!player->playTrackIndex(globalTrack)) return false;
+  AudioPlayer *core = player->audioPlayer();
+  if (core == nullptr) return false;
+  String path = player->getTrackNameAt(globalTrack);
+  while (path.startsWith("//")) path.remove(0, 1);
+  player->trackIndex = globalTrack;
+  core->stop();
+  if (!core->setPath(path.c_str())) {
+    Serial.printf("ERROR: failed to open track %s\n", path.c_str());
+    return false;
+  }
+  core->play();
+  trackStartedAt = millis();
   resumeBaseSeconds = seconds;
   if (!seekPlayerToSecondsLocked(seconds)) resumeBaseSeconds = 0;
   Serial.printf("Playing card %s, item %u/%u: %s\n", activeUid.c_str(),
@@ -363,9 +375,9 @@ void stopCard() {
   const String removedUid = activeUid;
   if (xSemaphoreTake(playerMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
     cardPlaybackActive = false;
-    const uint32_t elapsed = resumeBaseSeconds + player->currentTrackElapsedSeconds();
+    const uint32_t elapsed = resumeBaseSeconds + (millis() - trackStartedAt) / 1000;
     saveResume(removedUid, activePlaylistPosition, elapsed);
-    player->pause();
+    if (player->audioPlayer() != nullptr) player->audioPlayer()->stop();
     xSemaphoreGive(playerMutex);
     Serial.printf("Card removed: %s, saved item %u at %lu sec\n",
                   removedUid.c_str(), activePlaylistPosition + 1,
@@ -452,6 +464,17 @@ void setup() {
   player->begin("mp3");
   player->stop();
   player->setVolume(0.55f);
+  AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Error);
+  for (String &path : player->trackList) {
+    while (path.startsWith("//")) path.remove(0, 1);
+  }
+  player->trackList.erase(
+      std::remove_if(player->trackList.begin(), player->trackList.end(),
+                     [](const String &path) {
+                       const int slash = path.lastIndexOf('/');
+                       return path.substring(slash + 1).startsWith("._");
+                     }),
+      player->trackList.end());
   sdReady = player->trackCount() > 0 || SD.cardType() != CARD_NONE;
   Serial.printf("SD %s; %d MP3 track(s) found\n", sdReady ? "ready" : "not available",
                 player->trackCount());
