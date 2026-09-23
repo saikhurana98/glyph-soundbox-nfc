@@ -35,7 +35,7 @@
 namespace {
 
 constexpr char kTag[] = "glyph";
-constexpr char kVersion[] = "0.4.0-idf";
+constexpr char kVersion[] = "0.5.0-idf";
 constexpr gpio_num_t kI2cSda = GPIO_NUM_4;
 constexpr gpio_num_t kI2cScl = GPIO_NUM_5;
 constexpr gpio_num_t kSdCs = GPIO_NUM_17;
@@ -105,6 +105,8 @@ std::atomic<bool> g_upload_active{false};
 std::atomic<bool> g_ble_connected{false};
 std::atomic<bool> g_sd_ready{false};
 std::atomic<bool> g_nfc_ready{false};
+std::atomic<bool> g_autoplay{false};
+std::atomic<bool> g_autoplay_after_tap{false};
 std::atomic<uint8_t> g_volume{75};
 std::atomic<uint32_t> g_audio_work_us{0};
 std::atomic<uint32_t> g_audio_pcm_us{0};
@@ -251,7 +253,9 @@ void save_resume(const std::string& uid, uint8_t position, uint32_t seconds) {
 bool hidden_path(const std::string& path) {
   for (auto part : split(lower(path), '/')) {
     if (!part.empty() && (part.front() == '.' || part.front() == '_' || part == "meta" ||
-                          part == "_meta" || part == "__macosx")) return true;
+                          part == "metadata" || part == "__macosx" || part == "sound-effects" ||
+                          part == "sound_effects" || part == "sound effects" || part == "sfx" ||
+                          part == "card-tap.mp3")) return true;
   }
   return false;
 }
@@ -290,6 +294,10 @@ void send_status() {
 
 void send_volume() {
   send_ble("VOLUME|" + std::to_string(g_volume.load()));
+}
+
+void send_autoplay() {
+  send_ble(std::string("AUTOPLAY|") + (g_autoplay ? "1" : "0"));
 }
 
 void send_performance() {
@@ -389,6 +397,8 @@ void advance_playlist() {
              '|' + std::to_string(track) + "|0");
   }
 }
+
+void play_selected_card();
 
 void audio_task(void*) {
   auto* pcm = static_cast<int16_t*>(heap_caps_malloc(
@@ -535,6 +545,8 @@ void audio_task(void*) {
              static_cast<unsigned long>(g_audio_frames.load()));
     if (interrupted) {
       xQueueOverwrite(g_audio_queue, &request);
+    } else if (request.action == AudioAction::kMemory && g_autoplay_after_tap.exchange(false)) {
+      play_selected_card();
     } else if (g_card_playback) {
       advance_playlist();
     }
@@ -547,6 +559,7 @@ void pause_playback() {
     elapsed += static_cast<uint32_t>((esp_timer_get_time() - g_track_started_us) / 1000000);
     save_resume(g_active_uid, g_playlist_position, elapsed);
   }
+  g_autoplay_after_tap = false;
   g_card_playback = false;
   stop_audio();
   send_ble("PAUSED|" + g_active_uid + '|' + std::to_string(g_playlist_position) +
@@ -565,10 +578,12 @@ void select_card(const std::string& uid) {
   send_ble("CARD|" + uid + '|' + card_label(uid));
   if (g_active_playlist.count == 0) send_ble("UNMAPPED|" + uid);
   g_card_playback = false;
+  g_autoplay_after_tap = g_autoplay && g_active_playlist.count > 0;
   play_tap_sound();
 }
 
 void play_selected_card() {
+  g_autoplay_after_tap = false;
   if (g_active_uid.empty()) return send_ble("ERROR|SELECT_A_CARD");
   g_active_playlist = load_playlist(g_active_uid);
   if (g_active_playlist.count == 0) return send_ble("ERROR|MAP_A_PLAYLIST");
@@ -587,6 +602,7 @@ void play_selected_card() {
 
 void play_track(int index) {
   if (index < 0 || index >= static_cast<int>(g_tracks.size())) return send_ble("ERROR|TRACK_INDEX");
+  g_autoplay_after_tap = false;
   g_card_playback = false;
   play_file(g_tracks[index]);
   send_ble("PLAYING_TRACK|" + std::to_string(index));
@@ -646,6 +662,8 @@ void handle_command(std::string command) {
     send_mappings();
   } else if (command == "VOLUME") {
     send_volume();
+  } else if (command == "AUTOPLAY") {
+    send_autoplay();
   } else if (command == "PERF") {
     send_performance();
   } else if (starts_with(command, "VOLUME|")) {
@@ -658,6 +676,14 @@ void handle_command(std::string command) {
     nvs_set_u8(g_nvs, "volume", g_volume.load());
     nvs_commit(g_nvs);
     send_volume();
+  } else if (starts_with(command, "AUTOPLAY|")) {
+    if (command != "AUTOPLAY|0" && command != "AUTOPLAY|1") {
+      return send_ble("ERROR|AUTOPLAY_VALUE");
+    }
+    g_autoplay = command.back() == '1';
+    nvs_set_u8(g_nvs, "autoplay", g_autoplay ? 1 : 0);
+    nvs_commit(g_nvs);
+    send_autoplay();
   } else if (starts_with(command, "UPLOAD_BEGIN|")) {
     const size_t pipe = command.find_last_of('|');
     if (pipe <= 13) return send_ble("ERROR|UPLOAD_FORMAT");
@@ -665,6 +691,7 @@ void handle_command(std::string command) {
     const uint32_t expected = std::strtoul(command.substr(pipe + 1).c_str(), nullptr, 10);
     if (name.empty() || !lower(name).ends_with(".mp3") || expected == 0) return send_ble("ERROR|UPLOAD_FILE");
     if (g_upload_active) cancel_upload();
+    g_autoplay_after_tap = false;
     g_card_playback = false;
     stop_audio();
     g_upload_name = name;
@@ -824,6 +851,9 @@ void nfc_task(void*) {
       }
       if (!g_present_uid.empty() && now - present_seen_us > 700000) {
         ESP_LOGI(kTag, "NFC card removed: %s", g_present_uid.c_str());
+        if (g_present_uid == g_active_uid && (g_card_playback || g_autoplay_after_tap)) {
+          pause_playback();
+        }
         g_present_uid.clear();
       }
     }
@@ -954,6 +984,10 @@ extern "C" void app_main() {
   uint8_t saved_volume = 75;
   if (nvs_get_u8(g_nvs, "volume", &saved_volume) == ESP_OK && saved_volume <= 100) {
     g_volume = saved_volume;
+  }
+  uint8_t saved_autoplay = 0;
+  if (nvs_get_u8(g_nvs, "autoplay", &saved_autoplay) == ESP_OK) {
+    g_autoplay = saved_autoplay != 0;
   }
 
   g_audio_queue = xQueueCreate(1, sizeof(AudioRequest));

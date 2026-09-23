@@ -22,7 +22,8 @@ const humanTitle = (path) => {
 const connected = () => Boolean(commandCharacteristic && device?.gatt?.connected);
 const isHiddenPath = (path) => path.split(/[\\/]/).some((part) => {
   const lower = part.toLowerCase();
-  return lower.startsWith(".") || ["meta", "_meta", "__macosx"].includes(lower);
+  return lower.startsWith(".") || lower.startsWith("_") ||
+    ["meta", "metadata", "__macosx", "sound-effects", "sound_effects", "sound effects", "sfx", "card-tap.mp3"].includes(lower);
 });
 const log = (direction, message) => {
   const time = new Date().toLocaleTimeString([], { hour12: false });
@@ -75,13 +76,17 @@ async function uploadFile(file) {
     const packet = new Uint8Array(chunk.length + 1);
     packet[0] = 1;
     packet.set(chunk, 1);
-    await commandCharacteristic.writeValueWithResponse(packet);
+    if (typeof commandCharacteristic.writeValueWithoutResponse === "function") {
+      await commandCharacteristic.writeValueWithoutResponse(packet);
+    } else {
+      await commandCharacteristic.writeValueWithResponse(packet);
+    }
     const sent = Math.min(offset + chunk.length, bytes.length);
     const percent = Math.round((sent / bytes.length) * 100);
     $("#uploadProgress").value = percent;
     $("#uploadStatus").textContent = `${safeName}: ${percent}%`;
     chunksSinceSync += 1;
-    if (chunksSinceSync === 8 || sent === bytes.length) {
+    if (chunksSinceSync === 16 || sent === bytes.length) {
       const acknowledged = waitForMessage(`UPLOAD_ACK|${sent}`, 10000);
       await send(`UPLOAD_SYNC|${sent}`);
       await acknowledged;
@@ -137,7 +142,7 @@ async function connect() {
   setConnected(true);
   $("#deviceStatus").textContent = device.name || "Glyph Soundbox";
   activity("Connected. Loading cards and SD tracks…");
-  for (const command of ["HELLO", "STATUS", "VOLUME", "PERF", "TRACKS", "MAPS"]) await send(command);
+  for (const command of ["HELLO", "STATUS", "VOLUME", "AUTOPLAY", "PERF", "TRACKS", "MAPS"]) await send(command);
 }
 
 function csvToPlaylist(csv) {
@@ -200,6 +205,8 @@ function onEvent(event) {
     const volume = Math.max(0, Math.min(100, Number(parts[0]) || 0));
     $("#volumeSlider").value = volume;
     $("#volumeValue").value = `${volume}%`;
+  } else if (type === "AUTOPLAY") {
+    $("#autoplayToggle").checked = parts[0] === "1";
   } else if (type === "PERF") {
     const load = (Number(parts[0]) / 10).toFixed(1);
     $("#performance").textContent = `Audio load: ${load}% · max frame ${parts[1]} µs · ${parts[2]} short writes`;
@@ -276,6 +283,7 @@ function updateActions() {
   $("#clearButton").disabled = !online || uploadBusy || !currentUid;
   $("#playButton").disabled = !online || uploadBusy || !currentUid || !currentPlaylist.length;
   $("#pauseButton").disabled = !online || uploadBusy;
+  $("#autoplayToggle").disabled = !online || uploadBusy;
   $("#volumeSlider").disabled = !online || uploadBusy;
   $("#uploadButton").disabled = !online || uploadBusy || !$("#uploadInput").files.length;
 }
@@ -293,6 +301,7 @@ $("#pauseButton").addEventListener("click", async () => {
 });
 $("#volumeSlider").addEventListener("input", (event) => { $("#volumeValue").value = `${event.target.value}%`; });
 $("#volumeSlider").addEventListener("change", (event) => send(`VOLUME|${event.target.value}`).catch((error) => activity(error.message)));
+$("#autoplayToggle").addEventListener("change", (event) => send(`AUTOPLAY|${event.target.checked ? 1 : 0}`).catch((error) => activity(error.message)));
 $("#saveButton").addEventListener("click", () => send(`MAP|${currentUid}|${currentPlaylist.join(",")}`).catch((error) => activity(error.message)));
 $("#clearButton").addEventListener("click", () => send(`CLEAR|${currentUid}`).catch((error) => activity(error.message)));
 $("#uploadInput").addEventListener("change", () => {

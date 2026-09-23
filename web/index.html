@@ -7,7 +7,7 @@
   <meta name="description" content="Configure NFC playlists on a Glyph Soundbox over Bluetooth.">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=11">
+  <link rel="stylesheet" href="styles.css?v=12">
   <title>Glyph Soundbox</title>
 </head>
 <body>
@@ -15,7 +15,7 @@
     <header>
       <div class="eyebrow">GLYPH SOUNDBOX · POC</div>
       <h1>Make a card<br>play a world.</h1>
-      <p class="lede">Tap a card to select it, build its playlist, then use the player controls when you want music.</p>
+      <p class="lede">Tap a card to select it, build its playlist, and optionally start playing it automatically.</p>
     </header>
     <section class="connection card">
       <div><span id="statusDot" class="dot"></span><strong id="connectionStatus">Not connected</strong><p id="deviceStatus">Use Chrome or Edge with Bluetooth enabled.</p></div>
@@ -28,6 +28,7 @@
     <section class="card player-controls">
       <div><div class="label">PLAYBACK</div><div id="nowPlaying">Nothing playing</div><div id="performance" class="performance">Audio load: waiting for playback</div></div>
       <div class="player-actions">
+        <label class="autoplay-control" for="autoplayToggle"><input id="autoplayToggle" type="checkbox" disabled><span><strong>AUTO-PLAY</strong><small>Play on tap, pause on removal</small></span></label>
         <label class="volume-control" for="volumeSlider"><span>VOLUME</span><output id="volumeValue" for="volumeSlider">75%</output><input id="volumeSlider" type="range" min="0" max="100" step="1" value="75" disabled></label>
         <div class="transport"><button id="playButton" class="primary" disabled>▶ Play playlist</button><button id="pauseButton" class="ghost" disabled>Ⅱ Pause</button></div>
       </div>
@@ -57,6 +58,6 @@
   </main>
   <template id="libraryItemTemplate"><div class="track library-track"><span class="track-index"></span><span class="track-name"></span><div class="track-actions"><button class="preview" aria-label="Play track">▶</button><button class="add" aria-label="Add to playlist">＋</button></div></div></template>
   <template id="playlistItemTemplate"><div class="track playlist-track"><span class="drag">⋮⋮</span><span class="track-name"></span><div class="reorder"><button class="up" aria-label="Move up">↑</button><button class="down" aria-label="Move down">↓</button><button class="remove" aria-label="Remove">×</button></div></div></template>
-  <script src="app.js?v=11" type="module"></script>
+  <script src="app.js?v=12" type="module"></script>
 </body>
 </html>
