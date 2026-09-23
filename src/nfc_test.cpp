@@ -28,21 +28,29 @@ bool addressResponds(uint8_t address) {
   return Wire.endTransmission() == 0;
 }
 
-void scanAndInitialize() {
-  Serial.print("I2C scan:");
-  bool foundAny = false;
-  for (uint8_t address = 1; address < 127; ++address) {
-    if (addressResponds(address)) {
-      foundAny = true;
-      Serial.printf(" 0x%02X", address);
-    }
-  }
-  if (!foundAny) Serial.print(" no devices");
-  Serial.println();
+bool probeOrientation(uint8_t sda, uint8_t scl, const char *label) {
+  Wire.end();
+  delay(20);
+  Wire.begin(sda, scl, 100000);
+  delay(20);
+  const int sdaLevel = digitalRead(sda);
+  const int sclLevel = digitalRead(scl);
+  const bool acknowledged = addressResponds(kPn532Address);
+  Serial.printf("BUS %s | SDA GPIO%u=%s | SCL GPIO%u=%s | 0x24=%s\n",
+                label, sda, sdaLevel ? "HIGH" : "LOW", scl,
+                sclLevel ? "HIGH" : "LOW", acknowledged ? "ACK" : "NO ACK");
+  return acknowledged;
+}
 
-  if (!addressResponds(kPn532Address)) {
+void scanAndInitialize() {
+  bool acknowledged = probeOrientation(kSda, kScl, "normal");
+  if (!acknowledged) acknowledged = probeOrientation(kScl, kSda, "swapped");
+  if (!acknowledged) {
     readerReady = false;
-    Serial.println("PN532 FAIL: address 0x24 is not acknowledging. Check power, ground, SDA/SCL and I2C mode switches.");
+    // Leave the bus in the documented orientation for the next retry.
+    Wire.end();
+    Wire.begin(kSda, kScl, 100000);
+    Serial.println("PN532 FAIL: powered but no I2C ACK in either wire orientation; verify I2C mode selection.");
     return;
   }
 
@@ -75,7 +83,7 @@ void setup() {
 void loop() {
   const uint32_t now = millis();
   if (!readerReady) {
-    if (now - lastScanAt >= 1500) {
+    if (now - lastScanAt >= 1000) {
       lastScanAt = now;
       scanAndInitialize();
     }
