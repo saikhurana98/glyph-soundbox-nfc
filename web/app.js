@@ -8,11 +8,35 @@ const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 let device, commandCharacteristic;
 let tracks = [], mappings = new Map(), cardLabels = new Map(), cardShuffles = new Map();
 let currentUid = "", currentPlaylist = [];
-let uploadBusy = false;
-const messageWaiters = [];
 const logLines = [];
 
-const activity = (message) => { $("#activity").textContent = message; };
+const marqueeObserver = new ResizeObserver((entries) => {
+  for (const { target } of entries) updateMarquee(target);
+});
+
+function updateMarquee(target) {
+  const content = target.querySelector(".marquee-content");
+  if (!content) return;
+  target.classList.remove("is-overflowing");
+  const distance = Math.ceil(content.scrollWidth - target.clientWidth);
+  if (distance <= 2) return;
+  target.style.setProperty("--marquee-distance", `${-distance}px`);
+  target.style.setProperty("--marquee-duration", `${Math.max(5, distance / 24 + 3)}s`);
+  target.classList.add("is-overflowing");
+}
+
+function scrollingText(target, text) {
+  target.classList.add("auto-scroll");
+  target.replaceChildren(Object.assign(document.createElement("span"), {
+    className: "marquee-content",
+    textContent: text,
+  }));
+  target.title = text;
+  marqueeObserver.observe(target);
+  requestAnimationFrame(() => updateMarquee(target));
+}
+
+const activity = (message) => scrollingText($("#activity"), message);
 const prettyUid = (uid) => uid.match(/.{1,2}/g)?.join(":") ?? uid;
 const humanTitle = (path) => {
   const file = path.split("/").filter(Boolean).at(-1) || path;
@@ -40,83 +64,6 @@ async function send(command) {
   log("TX>", command);
   // Keep commands from overtaking multi-notification responses such as TRACKS.
   await sleep(120);
-}
-
-function waitForMessage(prefix, timeoutMs = 8000) {
-  return new Promise((resolve, reject) => {
-    const waiter = { prefix, resolve, reject };
-    messageWaiters.push(waiter);
-    setTimeout(() => {
-      const index = messageWaiters.indexOf(waiter);
-      if (index >= 0) messageWaiters.splice(index, 1);
-      reject(new Error(`Timed out waiting for ${prefix}`));
-    }, timeoutMs);
-  });
-}
-
-function rejectMessageWaiters(error) {
-  while (messageWaiters.length) messageWaiters.shift().reject(error);
-}
-
-async function uploadFile(file) {
-  if (!file.name.toLowerCase().endsWith(".mp3")) throw new Error(`${file.name} is not an MP3 file.`);
-  // Keep the extension when shortening long names. Truncating the whole string
-  // used to turn ".mp3" into ".m", which the firmware correctly rejected.
-  const safeStem = file.name.slice(0, -4).replace(/[|/\\]/g, "_").slice(0, 92);
-  const safeName = `${safeStem}.mp3`;
-  const ready = waitForMessage(`UPLOAD_READY|${safeName}`);
-  await send(`UPLOAD_BEGIN|${safeName}|${file.size}`);
-  await ready;
-
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const chunkSize = 160;
-  let chunksSinceSync = 0;
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
-    const packet = new Uint8Array(chunk.length + 1);
-    packet[0] = 1;
-    packet.set(chunk, 1);
-    if (typeof commandCharacteristic.writeValueWithoutResponse === "function") {
-      await commandCharacteristic.writeValueWithoutResponse(packet);
-    } else {
-      await commandCharacteristic.writeValueWithResponse(packet);
-    }
-    const sent = Math.min(offset + chunk.length, bytes.length);
-    const percent = Math.round((sent / bytes.length) * 100);
-    $("#uploadProgress").value = percent;
-    $("#uploadStatus").textContent = `${safeName}: ${percent}%`;
-    chunksSinceSync += 1;
-    if (chunksSinceSync === 16 || sent === bytes.length) {
-      const acknowledged = waitForMessage(`UPLOAD_ACK|${sent}`, 10000);
-      await send(`UPLOAD_SYNC|${sent}`);
-      await acknowledged;
-      chunksSinceSync = 0;
-    }
-  }
-
-  const done = waitForMessage(`UPLOAD_DONE|${safeName}|`, 15000);
-  await send("UPLOAD_END");
-  await done;
-}
-
-async function uploadSelectedFiles() {
-  const files = [...$("#uploadInput").files];
-  if (!files.length) throw new Error("Choose one or more MP3 files first.");
-  uploadBusy = true;
-  $("#uploadProgress").hidden = false;
-  updateActions();
-  try {
-    for (const file of files) await uploadFile(file);
-    $("#uploadStatus").textContent = `${files.length} MP3 file(s) uploaded successfully.`;
-    $("#uploadInput").value = "";
-  } catch (error) {
-    $("#uploadStatus").textContent = `Upload failed: ${error.message}`;
-    try { await send("UPLOAD_CANCEL"); } catch {}
-    throw error;
-  } finally {
-    uploadBusy = false;
-    updateActions();
-  }
 }
 
 function setConnected(value) {
@@ -153,14 +100,7 @@ function onEvent(event) {
   const message = decoder.decode(event.target.value);
   log("RX<", message);
   activity(message);
-  for (let i = messageWaiters.length - 1; i >= 0; --i) {
-    if (message.startsWith(messageWaiters[i].prefix)) {
-      const [waiter] = messageWaiters.splice(i, 1);
-      waiter.resolve(message);
-    }
-  }
   const [type, ...parts] = message.split("|");
-  if (type === "ERROR") rejectMessageWaiters(new Error(`Player error: ${parts.join(" ").replaceAll("_", " ")}`));
   if (type === "TRACKS_BEGIN") { tracks = []; renderLibrary(); }
   else if (type === "TRACK") {
     const path = parts.slice(1).join("|");
@@ -203,14 +143,12 @@ function onEvent(event) {
     if (currentUid === parts[0]) { currentPlaylist = []; $("#shuffleToggle").checked = false; }
     renderPlaylist();
   } else if (type === "PLAYING") {
-    $("#nowPlaying").textContent = `${cardLabels.get(parts[0]) || "Card"}: ${humanTitle(tracks[Number(parts[2])] || "Track")}`;
+    scrollingText($("#nowPlaying"), `${cardLabels.get(parts[0]) || "Card"}: ${humanTitle(tracks[Number(parts[2])] || "Track")}`);
   } else if (type === "PLAYING_TRACK") {
-    $("#nowPlaying").textContent = `Preview: ${humanTitle(tracks[Number(parts[0])] || "Track")}`;
+    scrollingText($("#nowPlaying"), `Preview: ${humanTitle(tracks[Number(parts[0])] || "Track")}`);
   } else if (type === "PLAYING_TAP_SOUND") {
-    $("#nowPlaying").textContent = "Card tap sound";
-  } else if (type === "UPLOAD_DONE") {
-    $("#uploadStatus").textContent = `${parts[0]} uploaded (${Number(parts[1]).toLocaleString()} bytes).`;
-  } else if (type === "PAUSED") $("#nowPlaying").textContent = "Paused";
+    scrollingText($("#nowPlaying"), "Card tap sound");
+  } else if (type === "PAUSED") scrollingText($("#nowPlaying"), "Paused");
   else if (type === "STATUS") {
     $("#deviceStatus").textContent = `${parts[0]} · ${parts[1]} · ${parts[2]} MP3 track(s)`;
     if (parts[3] && parts[3] !== "NO_CARD") currentUid = parts[3];
@@ -244,7 +182,7 @@ function selectCard(uid, notifyPlayer = true) {
   currentPlaylist = [...(mappings.get(uid) || [])].filter((index) => tracks[index] != null);
   $("#cardSelect").value = uid;
   $("#cardNameInput").value = cardLabels.get(uid) || "";
-  $("#cardUid").textContent = `Card ID · ${prettyUid(uid)}`;
+  scrollingText($("#cardUid"), `Card ID · ${prettyUid(uid)}`);
   $("#shuffleToggle").checked = cardShuffles.get(uid) === true;
   renderPlaylist();
   if (notifyPlayer) send(`SELECT|${uid}`).catch((error) => activity(error.message));
@@ -259,7 +197,7 @@ function renderLibrary() {
     if (path == null) return;
     const item = $("#libraryItemTemplate").content.firstElementChild.cloneNode(true);
     item.querySelector(".track-index").textContent = String(index + 1).padStart(2, "0");
-    item.querySelector(".track-name").textContent = humanTitle(path); item.title = path;
+    scrollingText(item.querySelector(".track-name"), humanTitle(path)); item.title = path;
     item.querySelector(".preview").addEventListener("click", () => send(`PLAY_TRACK|${index}`).catch((error) => activity(error.message)));
     item.querySelector(".add").addEventListener("click", () => {
       if (!currentUid) return activity("Tap or choose a card first.");
@@ -279,7 +217,7 @@ function renderPlaylist() {
   }
   currentPlaylist.forEach((trackIndex, position) => {
     const item = $("#playlistItemTemplate").content.firstElementChild.cloneNode(true);
-    item.querySelector(".track-name").textContent = `${position + 1}. ${humanTitle(tracks[trackIndex] || `Track ${trackIndex + 1}`)}`;
+    scrollingText(item.querySelector(".track-name"), `${position + 1}. ${humanTitle(tracks[trackIndex] || `Track ${trackIndex + 1}`)}`);
     item.querySelector(".up").disabled = position === 0;
     item.querySelector(".down").disabled = position === currentPlaylist.length - 1;
     item.querySelector(".up").addEventListener("click", () => move(position, -1));
@@ -304,17 +242,16 @@ function renderTapModeHelp() {
 
 function updateActions() {
   const online = connected();
-  $("#saveButton").disabled = !online || uploadBusy || !currentUid || !currentPlaylist.length;
-  $("#clearButton").disabled = !online || uploadBusy || !currentUid;
-  $("#playButton").disabled = !online || uploadBusy || !currentUid || !currentPlaylist.length;
-  $("#pauseButton").disabled = !online || uploadBusy;
-  $("#tapMode").disabled = !online || uploadBusy;
-  $("#resumeToggle").disabled = !online || uploadBusy;
-  $("#volumeSlider").disabled = !online || uploadBusy;
-  $("#uploadButton").disabled = !online || uploadBusy || !$("#uploadInput").files.length;
-  $("#cardNameInput").disabled = !online || uploadBusy || !currentUid;
-  $("#renameButton").disabled = !online || uploadBusy || !currentUid || !$("#cardNameInput").value.trim();
-  $("#shuffleToggle").disabled = !online || uploadBusy || !currentUid;
+  $("#saveButton").disabled = !online || !currentUid || !currentPlaylist.length;
+  $("#clearButton").disabled = !online || !currentUid;
+  $("#playButton").disabled = !online || !currentUid || !currentPlaylist.length;
+  $("#pauseButton").disabled = !online;
+  $("#tapMode").disabled = !online;
+  $("#resumeToggle").disabled = !online;
+  $("#volumeSlider").disabled = !online;
+  $("#cardNameInput").disabled = !online || !currentUid;
+  $("#renameButton").disabled = !online || !currentUid || !$("#cardNameInput").value.trim();
+  $("#shuffleToggle").disabled = !online || !currentUid;
 }
 
 $("#connectButton").addEventListener("click", () => connect().catch((error) => activity(error.message)));
@@ -340,11 +277,8 @@ $("#renameButton").addEventListener("click", () => {
 $("#shuffleToggle").addEventListener("change", (event) => send(`SHUFFLE|${currentUid}|${event.target.checked ? 1 : 0}`).catch((error) => activity(error.message)));
 $("#saveButton").addEventListener("click", () => send(`MAP|${currentUid}|${currentPlaylist.join(",")}|${$("#shuffleToggle").checked ? 1 : 0}`).catch((error) => activity(error.message)));
 $("#clearButton").addEventListener("click", () => send(`CLEAR|${currentUid}`).catch((error) => activity(error.message)));
-$("#uploadInput").addEventListener("change", () => {
-  const count = $("#uploadInput").files.length;
-  $("#uploadStatus").textContent = count ? `${count} MP3 file(s) selected.` : "MP3 files are transferred over Bluetooth.";
-  updateActions();
-});
-$("#uploadButton").addEventListener("click", () => uploadSelectedFiles().catch((error) => activity(error.message)));
 $("#clearLogButton").addEventListener("click", () => { logLines.length = 0; $("#serialLog").textContent = "Log cleared."; });
+scrollingText($("#nowPlaying"), "Nothing playing");
+scrollingText($("#cardUid"), "No card selected");
+activity("Waiting for a connection.");
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("service-worker.js").then((registration) => registration.update());

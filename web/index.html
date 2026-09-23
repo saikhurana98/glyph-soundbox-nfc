@@ -7,15 +7,15 @@
   <meta name="description" content="Configure NFC playlists on a Glyph Soundbox over Bluetooth.">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=16">
+  <link rel="stylesheet" href="styles.css?v=17">
   <title>Glyph Soundbox</title>
 </head>
 <body>
   <main>
     <header>
-      <div class="eyebrow">GLYPH SOUNDBOX · POC</div>
+      <div class="eyebrow">GLYPH SOUNDBOX</div>
       <h1>Make a card<br>play a world.</h1>
-      <p class="lede">Tap a card to select it, build its playlist, and optionally start playing it automatically.</p>
+      <p class="lede">Tap a card, choose its soundtrack, and let the player remember the rest.</p>
     </header>
     <section class="connection card">
       <div><span id="statusDot" class="dot"></span><strong id="connectionStatus">Not connected</strong><p id="deviceStatus">Use Chrome or Edge with Bluetooth enabled.</p></div>
@@ -26,7 +26,7 @@
       <button id="refreshButton" class="ghost" disabled>Refresh library</button>
     </section>
     <section class="card player-controls">
-      <div><div class="label">PLAYBACK</div><div id="nowPlaying">Nothing playing</div><div id="performance" class="performance">Audio load: waiting for playback</div></div>
+      <div class="player-summary"><div class="label">PLAYBACK</div><div id="nowPlaying">Nothing playing</div><div id="performance" class="performance">Audio load: waiting for playback</div></div>
       <div class="player-actions">
         <label class="tap-mode-control" for="tapMode"><span>CARD TAP</span><select id="tapMode" disabled><option value="presence">Play while card is present</option><option value="toggle">Tap toggles play / pause</option></select><small id="tapModeHelp">Removal pauses and saves position.</small></label>
         <label class="resume-control" for="resumeToggle"><input id="resumeToggle" type="checkbox" checked disabled><span><strong>Resume checkpoints</strong><small>Continue normal playlists from their last saved track and time.</small></span></label>
@@ -37,13 +37,6 @@
     <section class="workspace">
       <div class="card library-panel">
         <div class="section-title"><div><div class="label">SD LIBRARY</div><h2>Available tracks</h2></div><span id="trackCount" class="pill">0</span></div>
-        <div class="upload-row">
-          <input id="uploadInput" type="file" accept=".mp3,audio/mpeg" multiple hidden>
-          <label for="uploadInput" class="ghost file-button">Choose MP3s</label>
-          <button id="uploadButton" class="primary" disabled>Upload to SD</button>
-        </div>
-        <div id="uploadStatus" class="upload-status">MP3 files are transferred over Bluetooth.</div>
-        <progress id="uploadProgress" max="100" value="0" hidden></progress>
         <div id="library" class="list empty">Connect to load MP3 files.</div>
       </div>
       <div class="card playlist-panel">
@@ -60,6 +53,6 @@
   </main>
   <template id="libraryItemTemplate"><div class="track library-track"><span class="track-index"></span><span class="track-name"></span><div class="track-actions"><button class="preview" aria-label="Play track">▶</button><button class="add" aria-label="Add to playlist">＋</button></div></div></template>
   <template id="playlistItemTemplate"><div class="track playlist-track"><span class="drag">⋮⋮</span><span class="track-name"></span><div class="reorder"><button class="up" aria-label="Move up">↑</button><button class="down" aria-label="Move down">↓</button><button class="remove" aria-label="Remove">×</button></div></div></template>
-  <script src="app.js?v=16" type="module"></script>
+  <script src="app.js?v=17" type="module"></script>
 </body>
 </html>
