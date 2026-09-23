@@ -37,7 +37,9 @@ pio device monitor
 
 ## PWA
 
-The app lives in [`web/`](web/). Open the published GitHub Pages URL in Chrome or Edge, connect, tap a card, choose tracks, reorder them, and save.
+The app lives in [`web/`](web/) and is published at
+[saikhurana98.github.io/glyph-soundbox-nfc](https://saikhurana98.github.io/glyph-soundbox-nfc/).
+Open it in Chrome or Edge, connect, tap a card, choose tracks, reorder them, and save.
 
 Web Bluetooth is not supported by Safari on iPhone/iPad. An iOS-native wrapper is outside this POC.
 
@@ -48,4 +50,3 @@ Service `7e400001-b5a3-f393-e0a9-e50e24dcca9e` has a write command characteristi
 ## Credits
 
 Built on PCB Cupid's MIT-licensed Soundbox example and `PCBCUPID_PLAYERS` library. Inspired by the interaction model of the Yoto Player; this project is unaffiliated with Yoto.
-
