@@ -40,7 +40,10 @@
         <div class="actions"><button id="clearButton" class="ghost" disabled>Clear</button><button id="saveButton" class="primary" disabled>Save playlist</button></div>
       </div>
     </section>
-    <section class="card activity-card"><div class="label">PLAYER ACTIVITY</div><div id="activity">Waiting for a connection.</div></section>
+    <section class="card activity-card">
+      <div class="log-heading"><div><div class="label">LIVE DEVICE LOG</div><div id="activity">Waiting for a connection.</div></div><button id="clearLogButton" class="ghost">Clear log</button></div>
+      <pre id="serialLog" aria-live="polite">Open the Bluetooth connection to begin.</pre>
+    </section>
   </main>
   <template id="libraryItemTemplate"><div class="track library-track"><span class="track-index"></span><span class="track-name"></span><div class="track-actions"><button class="preview" aria-label="Play track">▶</button><button class="add" aria-label="Add to playlist">＋</button></div></div></template>
   <template id="playlistItemTemplate"><div class="track playlist-track"><span class="drag">⋮⋮</span><span class="track-name"></span><div class="reorder"><button class="up" aria-label="Move up">↑</button><button class="down" aria-label="Move down">↓</button><button class="remove" aria-label="Remove">×</button></div></div></template>

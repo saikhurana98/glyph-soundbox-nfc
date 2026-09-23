@@ -7,6 +7,7 @@ const encoder = new TextEncoder();
 let device, commandCharacteristic;
 let tracks = [], mappings = new Map(), cardLabels = new Map();
 let currentUid = "", currentPlaylist = [];
+const logLines = [];
 
 const activity = (message) => { $("#activity").textContent = message; };
 const prettyUid = (uid) => uid.match(/.{1,2}/g)?.join(":") ?? uid;
@@ -16,10 +17,19 @@ const humanTitle = (path) => {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 };
 const connected = () => Boolean(commandCharacteristic && device?.gatt?.connected);
+const log = (direction, message) => {
+  const time = new Date().toLocaleTimeString([], { hour12: false });
+  logLines.push(`${time} ${direction} ${message}`);
+  if (logLines.length > 250) logLines.splice(0, logLines.length - 250);
+  const view = $("#serialLog");
+  view.textContent = logLines.join("\n");
+  view.scrollTop = view.scrollHeight;
+};
 
 async function send(command) {
   if (!commandCharacteristic) throw new Error("Player is not connected");
   await commandCharacteristic.writeValueWithoutResponse(encoder.encode(command));
+  log("TX>", command);
 }
 
 function setConnected(value) {
@@ -54,6 +64,7 @@ function csvToPlaylist(csv) {
 
 function onEvent(event) {
   const message = decoder.decode(event.target.value);
+  log("RX<", message);
   activity(message);
   const [type, ...parts] = message.split("|");
   if (type === "TRACKS_BEGIN") tracks = [];
@@ -63,6 +74,7 @@ function onEvent(event) {
   else if (type === "MAP") {
     mappings.set(parts[0], csvToPlaylist(parts[1] || ""));
     cardLabels.set(parts[0], parts[2] || `Card ${cardLabels.size + 1}`);
+    renderCards();
   } else if (type === "MAPS_END") {
     renderCards();
     if (currentUid && mappings.has(currentUid)) selectCard(currentUid, false);
@@ -171,4 +183,5 @@ $("#playButton").addEventListener("click", () => send("PLAY").catch((error) => a
 $("#pauseButton").addEventListener("click", () => send("PAUSE").catch((error) => activity(error.message)));
 $("#saveButton").addEventListener("click", () => send(`MAP|${currentUid}|${currentPlaylist.join(",")}`).catch((error) => activity(error.message)));
 $("#clearButton").addEventListener("click", () => send(`CLEAR|${currentUid}`).catch((error) => activity(error.message)));
+$("#clearLogButton").addEventListener("click", () => { logLines.length = 0; $("#serialLog").textContent = "Log cleared."; });
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("service-worker.js").then((registration) => registration.update());
