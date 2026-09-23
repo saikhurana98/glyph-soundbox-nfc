@@ -28,12 +28,16 @@ constexpr uint32_t kNfcCandidateHoldMs = 700;
 constexpr uint32_t kAudioStartNfcQuietMs = 1800;
 constexpr uint8_t kNfcStableReads = 2;
 constexpr size_t kMaxPlaylistTracks = 32;
-constexpr char kTapTrackName[] = "try-me.mp3";
 
 constexpr char kBleDeviceName[] = "Glyph Soundbox";
 constexpr char kServiceUuid[] = "7e400001-b5a3-f393-e0a9-e50e24dcca9e";
 constexpr char kCommandUuid[] = "7e400002-b5a3-f393-e0a9-e50e24dcca9e";
 constexpr char kEventsUuid[] = "7e400003-b5a3-f393-e0a9-e50e24dcca9e";
+
+extern const uint8_t kCardTapAudioStart[]
+    asm("_binary_assets_Modern_User_Interface_Sound_Effects__Copyright_Free__mp3_start");
+extern const uint8_t kCardTapAudioEnd[]
+    asm("_binary_assets_Modern_User_Interface_Sound_Effects__Copyright_Free__mp3_end");
 
 AudioPlayerConfig playerConfig = {
     .sd_cs = kSdCs,
@@ -53,6 +57,8 @@ Preferences prefs;
 NimBLECharacteristic *eventsCharacteristic = nullptr;
 SemaphoreHandle_t playerMutex = nullptr;
 QueueHandle_t bleCommandQueue = nullptr;
+MemoryStream cardTapAudio(kCardTapAudioStart,
+                          kCardTapAudioEnd - kCardTapAudioStart);
 
 struct BleCommand {
   char text[160]{};
@@ -252,7 +258,7 @@ void handleBleCommand(String command) {
   command.trim();
   Serial.printf("BLE< %s\n", command.c_str());
   if (command == "HELLO") {
-    sendBle("INFO|Glyph Soundbox|0.2.4");
+    sendBle("INFO|Glyph Soundbox|0.2.5");
   } else if (command == "STATUS") {
     sendStatus();
   } else if (command == "TRACKS") {
@@ -420,22 +426,23 @@ void selectCard(const String &uid) {
   sendBle("CARD|" + uid + '|' + cardLabel(uid));
   if (activePlaylist.count == 0) sendBle("UNMAPPED|" + uid);
 
-  int tapTrack = -1;
-  for (int i = 0; i < player->trackCount(); ++i) {
-    String path = player->getTrackNameAt(i);
-    while (path.startsWith("//")) path.remove(0, 1);
-    const int slash = path.lastIndexOf('/');
-    if (path.substring(slash + 1).equalsIgnoreCase(kTapTrackName)) {
-      tapTrack = i;
-      break;
+  if (xSemaphoreTake(playerMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+    AudioPlayer *core = player->audioPlayer();
+    cardPlaybackActive = false;
+    cardTapAudio.rewind();
+    core->stop();
+    const bool opened = core->setStream(&cardTapAudio);
+    if (opened) {
+      core->play();
+      nfcQuietUntil = millis() + kAudioStartNfcQuietMs;
+      Serial.printf("Card tap sound: embedded MP3 (%u bytes)\n",
+                    static_cast<unsigned>(kCardTapAudioEnd - kCardTapAudioStart));
+      sendBle("PLAYING_TAP_SOUND");
+    } else {
+      Serial.println("ERROR: could not open embedded card tap sound");
+      sendBle("ERROR|TAP_SOUND_OPEN");
     }
-  }
-  if (tapTrack >= 0) {
-    Serial.printf("Card tap sound: %s\n", kTapTrackName);
-    playTrackFromWeb(tapTrack);
-  } else {
-    Serial.printf("ERROR: card tap sound not found: %s\n", kTapTrackName);
-    sendBle("ERROR|TAP_TRACK_NOT_FOUND");
+    xSemaphoreGive(playerMutex);
   }
 }
 
@@ -585,7 +592,7 @@ void scanI2c() {
 void setup() {
   Serial.begin(115200);
   delay(3500);  // Leave time for USB CDC and a serial monitor to attach.
-  Serial.println("\n=== Glyph Soundbox NFC + BLE POC 0.2.4 ===");
+  Serial.println("\n=== Glyph Soundbox NFC + BLE POC 0.2.5 ===");
   prefs.begin("yotopoc", false);
   playerMutex = xSemaphoreCreateMutex();
   bleCommandQueue = xQueueCreate(8, sizeof(BleCommand));
