@@ -8,6 +8,8 @@ const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 let device, commandCharacteristic;
 let tracks = [], mappings = new Map(), cardLabels = new Map();
 let currentUid = "", currentPlaylist = [];
+let uploadBusy = false;
+const messageWaiters = [];
 const logLines = [];
 
 const activity = (message) => { $("#activity").textContent = message; };
@@ -18,6 +20,10 @@ const humanTitle = (path) => {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 };
 const connected = () => Boolean(commandCharacteristic && device?.gatt?.connected);
+const isHiddenPath = (path) => path.split(/[\\/]/).some((part) => {
+  const lower = part.toLowerCase();
+  return lower.startsWith(".") || ["meta", "_meta", "__macosx"].includes(lower);
+});
 const log = (direction, message) => {
   const time = new Date().toLocaleTimeString([], { hour12: false });
   logLines.push(`${time} ${direction} ${message}`);
@@ -33,6 +39,63 @@ async function send(command) {
   log("TX>", command);
   // Keep commands from overtaking multi-notification responses such as TRACKS.
   await sleep(120);
+}
+
+function waitForMessage(prefix, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const waiter = { prefix, resolve, reject };
+    messageWaiters.push(waiter);
+    setTimeout(() => {
+      const index = messageWaiters.indexOf(waiter);
+      if (index >= 0) messageWaiters.splice(index, 1);
+      reject(new Error(`Timed out waiting for ${prefix}`));
+    }, timeoutMs);
+  });
+}
+
+async function uploadFile(file) {
+  if (!file.name.toLowerCase().endsWith(".mp3")) throw new Error(`${file.name} is not an MP3 file.`);
+  const safeName = file.name.replace(/[|/\\]/g, "_").slice(0, 96);
+  const ready = waitForMessage(`UPLOAD_READY|${safeName}`);
+  await send(`UPLOAD_BEGIN|${safeName}|${file.size}`);
+  await ready;
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const chunkSize = 160;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
+    const packet = new Uint8Array(chunk.length + 1);
+    packet[0] = 1;
+    packet.set(chunk, 1);
+    await commandCharacteristic.writeValueWithResponse(packet);
+    const percent = Math.round((Math.min(offset + chunk.length, bytes.length) / bytes.length) * 100);
+    $("#uploadProgress").value = percent;
+    $("#uploadStatus").textContent = `${safeName}: ${percent}%`;
+    if ((offset / chunkSize) % 8 === 0) await sleep(10);
+  }
+
+  const done = waitForMessage(`UPLOAD_DONE|${safeName}|`, 15000);
+  await send("UPLOAD_END");
+  await done;
+}
+
+async function uploadSelectedFiles() {
+  const files = [...$("#uploadInput").files];
+  if (!files.length) throw new Error("Choose one or more MP3 files first.");
+  uploadBusy = true;
+  $("#uploadProgress").hidden = false;
+  updateActions();
+  try {
+    for (const file of files) await uploadFile(file);
+    $("#uploadStatus").textContent = `${files.length} MP3 file(s) uploaded successfully.`;
+    $("#uploadInput").value = "";
+  } catch (error) {
+    try { await send("UPLOAD_CANCEL"); } catch {}
+    throw error;
+  } finally {
+    uploadBusy = false;
+    updateActions();
+  }
 }
 
 function setConnected(value) {
@@ -69,10 +132,17 @@ function onEvent(event) {
   const message = decoder.decode(event.target.value);
   log("RX<", message);
   activity(message);
+  for (let i = messageWaiters.length - 1; i >= 0; --i) {
+    if (message.startsWith(messageWaiters[i].prefix)) {
+      const [waiter] = messageWaiters.splice(i, 1);
+      waiter.resolve(message);
+    }
+  }
   const [type, ...parts] = message.split("|");
   if (type === "TRACKS_BEGIN") { tracks = []; renderLibrary(); }
   else if (type === "TRACK") {
-    tracks[Number(parts[0])] = parts.slice(1).join("|");
+    const path = parts.slice(1).join("|");
+    if (!isHiddenPath(path)) tracks[Number(parts[0])] = path;
     // Do not depend on TRACKS_END: notifications can occasionally be dropped.
     renderLibrary();
   }
@@ -101,6 +171,10 @@ function onEvent(event) {
     $("#nowPlaying").textContent = `${cardLabels.get(parts[0]) || "Card"}: ${humanTitle(tracks[Number(parts[2])] || "Track")}`;
   } else if (type === "PLAYING_TRACK") {
     $("#nowPlaying").textContent = `Preview: ${humanTitle(tracks[Number(parts[0])] || "Track")}`;
+  } else if (type === "PLAYING_TAP_SOUND") {
+    $("#nowPlaying").textContent = "Card tap sound";
+  } else if (type === "UPLOAD_DONE") {
+    $("#uploadStatus").textContent = `${parts[0]} uploaded (${Number(parts[1]).toLocaleString()} bytes).`;
   } else if (type === "PAUSED") $("#nowPlaying").textContent = "Paused";
   else if (type === "STATUS") {
     $("#deviceStatus").textContent = `${parts[0]} · ${parts[1]} · ${parts[2]} MP3 track(s)`;
@@ -174,10 +248,11 @@ function move(position, offset) {
 
 function updateActions() {
   const online = connected();
-  $("#saveButton").disabled = !online || !currentUid || !currentPlaylist.length;
-  $("#clearButton").disabled = !online || !currentUid;
-  $("#playButton").disabled = !online || !currentUid || !currentPlaylist.length;
-  $("#pauseButton").disabled = !online;
+  $("#saveButton").disabled = !online || uploadBusy || !currentUid || !currentPlaylist.length;
+  $("#clearButton").disabled = !online || uploadBusy || !currentUid;
+  $("#playButton").disabled = !online || uploadBusy || !currentUid || !currentPlaylist.length;
+  $("#pauseButton").disabled = !online || uploadBusy;
+  $("#uploadButton").disabled = !online || uploadBusy || !$("#uploadInput").files.length;
 }
 
 $("#connectButton").addEventListener("click", () => connect().catch((error) => activity(error.message)));
@@ -190,5 +265,11 @@ $("#playButton").addEventListener("click", () => send("PLAY").catch((error) => a
 $("#pauseButton").addEventListener("click", () => send("PAUSE").catch((error) => activity(error.message)));
 $("#saveButton").addEventListener("click", () => send(`MAP|${currentUid}|${currentPlaylist.join(",")}`).catch((error) => activity(error.message)));
 $("#clearButton").addEventListener("click", () => send(`CLEAR|${currentUid}`).catch((error) => activity(error.message)));
+$("#uploadInput").addEventListener("change", () => {
+  const count = $("#uploadInput").files.length;
+  $("#uploadStatus").textContent = count ? `${count} MP3 file(s) selected.` : "MP3 files are transferred over Bluetooth.";
+  updateActions();
+});
+$("#uploadButton").addEventListener("click", () => uploadSelectedFiles().catch((error) => activity(error.message)));
 $("#clearLogButton").addEventListener("click", () => { logLines.length = 0; $("#serialLog").textContent = "Log cleared."; });
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("service-worker.js").then((registration) => registration.update());

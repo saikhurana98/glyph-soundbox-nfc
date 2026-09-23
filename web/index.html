@@ -32,6 +32,13 @@
     <section class="workspace">
       <div class="card library-panel">
         <div class="section-title"><div><div class="label">SD LIBRARY</div><h2>Available tracks</h2></div><span id="trackCount" class="pill">0</span></div>
+        <div class="upload-row">
+          <input id="uploadInput" type="file" accept=".mp3,audio/mpeg" multiple hidden>
+          <label for="uploadInput" class="ghost file-button">Choose MP3s</label>
+          <button id="uploadButton" class="primary" disabled>Upload to SD</button>
+        </div>
+        <div id="uploadStatus" class="upload-status">MP3 files are transferred over Bluetooth.</div>
+        <progress id="uploadProgress" max="100" value="0" hidden></progress>
         <div id="library" class="list empty">Connect to load MP3 files.</div>
       </div>
       <div class="card playlist-panel">

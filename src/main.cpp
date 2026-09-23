@@ -35,9 +35,9 @@ constexpr char kCommandUuid[] = "7e400002-b5a3-f393-e0a9-e50e24dcca9e";
 constexpr char kEventsUuid[] = "7e400003-b5a3-f393-e0a9-e50e24dcca9e";
 
 extern const uint8_t kCardTapAudioStart[]
-    asm("_binary_assets_Modern_User_Interface_Sound_Effects__Copyright_Free__mp3_start");
+    asm("_binary_assets_card_tap_mp3_start");
 extern const uint8_t kCardTapAudioEnd[]
-    asm("_binary_assets_Modern_User_Interface_Sound_Effects__Copyright_Free__mp3_end");
+    asm("_binary_assets_card_tap_mp3_end");
 
 AudioPlayerConfig playerConfig = {
     .sd_cs = kSdCs,
@@ -61,8 +61,15 @@ MemoryStream cardTapAudio(kCardTapAudioStart,
                           kCardTapAudioEnd - kCardTapAudioStart);
 
 struct BleCommand {
-  char text[160]{};
+  uint16_t length = 0;
+  uint8_t data[184]{};
 };
+
+File uploadFile;
+String uploadName;
+uint32_t uploadExpectedBytes = 0;
+uint32_t uploadReceivedBytes = 0;
+bool uploadActive = false;
 
 struct Playlist {
   uint16_t tracks[kMaxPlaylistTracks]{};
@@ -228,12 +235,90 @@ void sendStatus() {
   sendBle(status);
 }
 
+bool isHiddenTrackPath(String path) {
+  path.toLowerCase();
+  path.replace('\\', '/');
+  int start = 0;
+  while (start < static_cast<int>(path.length())) {
+    int end = path.indexOf('/', start);
+    if (end < 0) end = path.length();
+    const String part = path.substring(start, end);
+    if (!part.isEmpty() &&
+        (part.startsWith(".") || part == "meta" || part == "_meta" ||
+         part == "__macosx")) {
+      return true;
+    }
+    start = end + 1;
+  }
+  return false;
+}
+
+String safeUploadName(const String &input) {
+  String name = input;
+  name.replace('\\', '/');
+  const int slash = name.lastIndexOf('/');
+  if (slash >= 0) name = name.substring(slash + 1);
+  String safe;
+  safe.reserve(name.length());
+  for (size_t i = 0; i < name.length() && safe.length() < 96; ++i) {
+    const char c = name[i];
+    safe += isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' ||
+                    c == '.' || c == ' '
+                ? c
+                : '_';
+  }
+  if (safe.startsWith(".")) safe = "track" + safe;
+  return safe;
+}
+
 void sendTracks() {
   sendBle("TRACKS_BEGIN|" + String(player->trackCount()));
   for (int i = 0; i < player->trackCount(); ++i) {
     sendBle("TRACK|" + String(i) + '|' + player->getTrackNameAt(i));
   }
   sendBle("TRACKS_END");
+}
+
+void finishUpload() {
+  if (!uploadActive) return sendBle("ERROR|NO_UPLOAD");
+  uploadFile.flush();
+  uploadFile.close();
+  uploadActive = false;
+  const String path = "/" + uploadName;
+  if (uploadReceivedBytes != uploadExpectedBytes) {
+    SD.remove(path.c_str());
+    sendBle("ERROR|UPLOAD_SIZE|" + String(uploadReceivedBytes) + '|' +
+            String(uploadExpectedBytes));
+    return;
+  }
+
+  bool alreadyListed = false;
+  for (const String &track : player->trackList) {
+    String normalized = track;
+    while (normalized.startsWith("//")) normalized.remove(0, 1);
+    if (normalized == path) alreadyListed = true;
+  }
+  if (!alreadyListed && !isHiddenTrackPath(path)) player->trackList.push_back(path);
+  sdReady = true;
+  Serial.printf("BLE upload complete: %s (%lu bytes)\n", path.c_str(),
+                static_cast<unsigned long>(uploadReceivedBytes));
+  sendBle("UPLOAD_DONE|" + uploadName + '|' + String(uploadReceivedBytes));
+  sendTracks();
+  sendStatus();
+}
+
+void handleUploadChunk(const uint8_t *data, size_t length) {
+  if (!uploadActive || !uploadFile || length == 0) return;
+  const size_t remaining = uploadExpectedBytes - uploadReceivedBytes;
+  const size_t count = std::min(length, remaining);
+  const size_t written = uploadFile.write(data, count);
+  uploadReceivedBytes += written;
+  if (written != count) {
+    uploadFile.close();
+    uploadActive = false;
+    SD.remove(("/" + uploadName).c_str());
+    sendBle("ERROR|UPLOAD_WRITE");
+  }
 }
 
 void sendMappings() {
@@ -258,13 +343,48 @@ void handleBleCommand(String command) {
   command.trim();
   Serial.printf("BLE< %s\n", command.c_str());
   if (command == "HELLO") {
-    sendBle("INFO|Glyph Soundbox|0.2.5");
+    sendBle("INFO|Glyph Soundbox|0.3.0");
   } else if (command == "STATUS") {
     sendStatus();
   } else if (command == "TRACKS") {
     sendTracks();
   } else if (command == "MAPS") {
     sendMappings();
+  } else if (command.startsWith("UPLOAD_BEGIN|")) {
+    const int sizePipe = command.lastIndexOf('|');
+    if (sizePipe <= 13) return sendBle("ERROR|UPLOAD_FORMAT");
+    String name = safeUploadName(command.substring(13, sizePipe));
+    String lowerName = name;
+    lowerName.toLowerCase();
+    const uint32_t expected = command.substring(sizePipe + 1).toInt();
+    if (!lowerName.endsWith(".mp3") || expected == 0 || name.isEmpty()) {
+      return sendBle("ERROR|UPLOAD_FILE");
+    }
+    if (uploadActive) {
+      uploadFile.close();
+      SD.remove(("/" + uploadName).c_str());
+    }
+    if (xSemaphoreTake(playerMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+      if (player->audioPlayer() != nullptr) player->audioPlayer()->stop();
+      cardPlaybackActive = false;
+      xSemaphoreGive(playerMutex);
+    }
+    uploadName = name;
+    uploadExpectedBytes = expected;
+    uploadReceivedBytes = 0;
+    const String path = "/" + uploadName;
+    SD.remove(path.c_str());
+    uploadFile = SD.open(path.c_str(), FILE_WRITE);
+    uploadActive = static_cast<bool>(uploadFile);
+    sendBle(uploadActive ? "UPLOAD_READY|" + uploadName
+                         : "ERROR|UPLOAD_OPEN");
+  } else if (command == "UPLOAD_END") {
+    finishUpload();
+  } else if (command == "UPLOAD_CANCEL") {
+    if (uploadFile) uploadFile.close();
+    if (!uploadName.isEmpty()) SD.remove(("/" + uploadName).c_str());
+    uploadActive = false;
+    sendBle("UPLOAD_CANCELLED");
   } else if (command == "PLAY") {
     playSelectedCard();
   } else if (command == "PAUSE") {
@@ -312,7 +432,9 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *characteristic, NimBLEConnInfo &) override {
     if (bleCommandQueue == nullptr) return;
     BleCommand command;
-    strlcpy(command.text, characteristic->getValue().c_str(), sizeof(command.text));
+    const auto value = characteristic->getValue();
+    command.length = std::min<size_t>(value.size(), sizeof(command.data));
+    memcpy(command.data, value.data(), command.length);
     if (xQueueSend(bleCommandQueue, &command, 0) != pdPASS) {
       Serial.println("BLE command queue full");
     }
@@ -592,10 +714,10 @@ void scanI2c() {
 void setup() {
   Serial.begin(115200);
   delay(3500);  // Leave time for USB CDC and a serial monitor to attach.
-  Serial.println("\n=== Glyph Soundbox NFC + BLE POC 0.2.5 ===");
+  Serial.println("\n=== Glyph Soundbox NFC + BLE POC 0.3.0 ===");
   prefs.begin("yotopoc", false);
   playerMutex = xSemaphoreCreateMutex();
-  bleCommandQueue = xQueueCreate(8, sizeof(BleCommand));
+  bleCommandQueue = xQueueCreate(20, sizeof(BleCommand));
   Wire.setBufferSize(300);
   Wire.begin(kI2cSda, kI2cScl, 100000);
   nfc.begin();
@@ -615,8 +737,7 @@ void setup() {
   player->trackList.erase(
       std::remove_if(player->trackList.begin(), player->trackList.end(),
                      [](const String &path) {
-                       const int slash = path.lastIndexOf('/');
-                       return path.substring(slash + 1).startsWith("._");
+                       return isHiddenTrackPath(path);
                      }),
       player->trackList.end());
   sdReady = player->trackCount() > 0 || SD.cardType() != CARD_NONE;
@@ -631,7 +752,13 @@ void loop() {
   BleCommand command;
   if (bleCommandQueue != nullptr &&
       xQueueReceive(bleCommandQueue, &command, 0) == pdPASS) {
-    handleBleCommand(String(command.text));
+    if (command.length > 0 && command.data[0] == 0x01) {
+      handleUploadChunk(command.data + 1, command.length - 1);
+    } else {
+      String text;
+      text.concat(reinterpret_cast<const char *>(command.data), command.length);
+      handleBleCommand(text);
+    }
   }
   pollNfc();
   delay(2);
