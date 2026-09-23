@@ -1,4 +1,4 @@
-const CACHE = "glyph-soundbox-v6";
+const CACHE = "glyph-soundbox-v8";
 const ASSETS = ["./", "index.html", "styles.css", "app.js", "manifest.webmanifest", "icon.svg"];
 
 self.addEventListener("install", (event) => {

@@ -53,25 +53,40 @@ function waitForMessage(prefix, timeoutMs = 8000) {
   });
 }
 
+function rejectMessageWaiters(error) {
+  while (messageWaiters.length) messageWaiters.shift().reject(error);
+}
+
 async function uploadFile(file) {
   if (!file.name.toLowerCase().endsWith(".mp3")) throw new Error(`${file.name} is not an MP3 file.`);
-  const safeName = file.name.replace(/[|/\\]/g, "_").slice(0, 96);
+  // Keep the extension when shortening long names. Truncating the whole string
+  // used to turn ".mp3" into ".m", which the firmware correctly rejected.
+  const safeStem = file.name.slice(0, -4).replace(/[|/\\]/g, "_").slice(0, 92);
+  const safeName = `${safeStem}.mp3`;
   const ready = waitForMessage(`UPLOAD_READY|${safeName}`);
   await send(`UPLOAD_BEGIN|${safeName}|${file.size}`);
   await ready;
 
   const bytes = new Uint8Array(await file.arrayBuffer());
   const chunkSize = 160;
+  let chunksSinceSync = 0;
   for (let offset = 0; offset < bytes.length; offset += chunkSize) {
     const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
     const packet = new Uint8Array(chunk.length + 1);
     packet[0] = 1;
     packet.set(chunk, 1);
     await commandCharacteristic.writeValueWithResponse(packet);
-    const percent = Math.round((Math.min(offset + chunk.length, bytes.length) / bytes.length) * 100);
+    const sent = Math.min(offset + chunk.length, bytes.length);
+    const percent = Math.round((sent / bytes.length) * 100);
     $("#uploadProgress").value = percent;
     $("#uploadStatus").textContent = `${safeName}: ${percent}%`;
-    if ((offset / chunkSize) % 8 === 0) await sleep(10);
+    chunksSinceSync += 1;
+    if (chunksSinceSync === 8 || sent === bytes.length) {
+      const acknowledged = waitForMessage(`UPLOAD_ACK|${sent}`, 10000);
+      await send(`UPLOAD_SYNC|${sent}`);
+      await acknowledged;
+      chunksSinceSync = 0;
+    }
   }
 
   const done = waitForMessage(`UPLOAD_DONE|${safeName}|`, 15000);
@@ -90,6 +105,7 @@ async function uploadSelectedFiles() {
     $("#uploadStatus").textContent = `${files.length} MP3 file(s) uploaded successfully.`;
     $("#uploadInput").value = "";
   } catch (error) {
+    $("#uploadStatus").textContent = `Upload failed: ${error.message}`;
     try { await send("UPLOAD_CANCEL"); } catch {}
     throw error;
   } finally {
@@ -139,6 +155,7 @@ function onEvent(event) {
     }
   }
   const [type, ...parts] = message.split("|");
+  if (type === "ERROR") rejectMessageWaiters(new Error(`Player error: ${parts.join(" ").replaceAll("_", " ")}`));
   if (type === "TRACKS_BEGIN") { tracks = []; renderLibrary(); }
   else if (type === "TRACK") {
     const path = parts.slice(1).join("|");
