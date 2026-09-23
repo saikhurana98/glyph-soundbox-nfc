@@ -400,11 +400,7 @@ void pollNfc() {
   lastPollAt = now;
   uint8_t uid[10]{};
   uint8_t uidLength = 0;
-  bool found = false;
-  if (xSemaphoreTake(playerMutex, pdMS_TO_TICKS(40)) == pdTRUE) {
-    found = nfc.readPassiveTargetID(0x00, uid, &uidLength, 250);
-    xSemaphoreGive(playerMutex);
-  }
+  const bool found = nfc.readPassiveTargetID(0x00, uid, &uidLength, 250);
   if (found) {
     const String seenUid = uidToString(uid, uidLength);
     lastCardSeenAt = now;
