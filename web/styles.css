@@ -5,3 +5,4 @@
 .log-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.log-heading .ghost{padding:8px 12px}.activity-card #activity{margin-top:5px;color:var(--muted)}#serialLog{box-sizing:border-box;max-height:300px;overflow:auto;margin:16px 0 0;padding:14px;border-radius:12px;background:#171717;color:#b8f5bd;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
 
 .upload-row{display:flex;gap:8px;margin:-3px 0 8px}.file-button{display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.upload-status{min-height:18px;margin-bottom:10px;color:var(--muted);font-size:.75rem}#uploadProgress{width:100%;height:8px;margin:0 0 12px;accent-color:var(--orange)}@media(max-width:520px){.upload-row{display:grid;grid-template-columns:1fr 1fr}.upload-row>*{text-align:center}}
+.performance{margin-top:4px;color:var(--muted);font-size:.72rem}

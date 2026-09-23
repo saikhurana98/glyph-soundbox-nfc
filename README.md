@@ -35,6 +35,9 @@ The firmware uses native ESP-IDF through PlatformIO. The ESP32-C6 has one 160 MH
 high-performance RISC-V core plus a low-power core; it does not have two general-purpose
 application cores. Audio decoding runs at the highest application task priority and feeds
 the I2S peripheral through DMA, while BLE commands and NFC polling run at lower priorities.
+The PWA's audio-load line reports measured decode/DSP utilization, worst frame time, and
+short DMA writes. A representative 44.1 kHz MP3 test used 14.1% real-time CPU with zero
+short writes, leaving enough headroom to keep the C6 for this proof of concept.
 
 ```sh
 pio run
@@ -56,7 +59,7 @@ Web Bluetooth is not supported by Safari on iPhone/iPad. An iOS-native wrapper i
 
 ## BLE protocol
 
-Service `7e400001-b5a3-f393-e0a9-e50e24dcca9e` has a write command characteristic and notify event characteristic. Messages are pipe-delimited UTF-8 strings such as `TRACKS`, `MAP|UID|0,2,1`, `CARD|UID`, and `PLAYING|UID|position|track|seconds`. MP3 uploads use `UPLOAD_BEGIN`, binary chunks, periodic `UPLOAD_SYNC`/`UPLOAD_ACK` checkpoints, and `UPLOAD_END`.
+Service `7e400001-b5a3-f393-e0a9-e50e24dcca9e` has a write command characteristic and notify event characteristic. Messages are pipe-delimited UTF-8 strings such as `TRACKS`, `MAP|UID|0,2,1`, `CARD|UID`, `VOLUME|75`, `PERF`, and `PLAYING|UID|position|track|seconds`. MP3 uploads use `UPLOAD_BEGIN`, binary chunks, periodic `UPLOAD_SYNC`/`UPLOAD_ACK` checkpoints, and `UPLOAD_END`.
 
 ## Credits
 

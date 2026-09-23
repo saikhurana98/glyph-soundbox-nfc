@@ -137,7 +137,7 @@ async function connect() {
   setConnected(true);
   $("#deviceStatus").textContent = device.name || "Glyph Soundbox";
   activity("Connected. Loading cards and SD tracks…");
-  for (const command of ["HELLO", "STATUS", "VOLUME", "TRACKS", "MAPS"]) await send(command);
+  for (const command of ["HELLO", "STATUS", "VOLUME", "PERF", "TRACKS", "MAPS"]) await send(command);
 }
 
 function csvToPlaylist(csv) {
@@ -200,6 +200,9 @@ function onEvent(event) {
     const volume = Math.max(0, Math.min(100, Number(parts[0]) || 0));
     $("#volumeSlider").value = volume;
     $("#volumeValue").value = `${volume}%`;
+  } else if (type === "PERF") {
+    const load = (Number(parts[0]) / 10).toFixed(1);
+    $("#performance").textContent = `Audio load: ${load}% · max frame ${parts[1]} µs · ${parts[2]} short writes`;
   } else if (type === "ERROR") activity(`Player error: ${parts.join(" ").replaceAll("_", " ")}`);
   updateActions();
 }
@@ -284,7 +287,10 @@ $("#refreshButton").addEventListener("click", async () => {
 });
 $("#cardSelect").addEventListener("change", (event) => { if (event.target.value) selectCard(event.target.value); });
 $("#playButton").addEventListener("click", () => send("PLAY").catch((error) => activity(error.message)));
-$("#pauseButton").addEventListener("click", () => send("PAUSE").catch((error) => activity(error.message)));
+$("#pauseButton").addEventListener("click", async () => {
+  try { await send("PAUSE"); await send("PERF"); }
+  catch (error) { activity(error.message); }
+});
 $("#volumeSlider").addEventListener("input", (event) => { $("#volumeValue").value = `${event.target.value}%`; });
 $("#volumeSlider").addEventListener("change", (event) => send(`VOLUME|${event.target.value}`).catch((error) => activity(error.message)));
 $("#saveButton").addEventListener("click", () => send(`MAP|${currentUid}|${currentPlaylist.join(",")}`).catch((error) => activity(error.message)));

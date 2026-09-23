@@ -106,6 +106,11 @@ std::atomic<bool> g_ble_connected{false};
 std::atomic<bool> g_sd_ready{false};
 std::atomic<bool> g_nfc_ready{false};
 std::atomic<uint8_t> g_volume{75};
+std::atomic<uint32_t> g_audio_work_us{0};
+std::atomic<uint32_t> g_audio_pcm_us{0};
+std::atomic<uint32_t> g_audio_max_frame_us{0};
+std::atomic<uint32_t> g_audio_frames{0};
+std::atomic<uint32_t> g_audio_short_writes{0};
 
 FILE* g_upload_file = nullptr;
 std::string g_upload_name;
@@ -287,6 +292,18 @@ void send_volume() {
   send_ble("VOLUME|" + std::to_string(g_volume.load()));
 }
 
+void send_performance() {
+  const uint32_t work_us = g_audio_work_us.load();
+  const uint32_t pcm_us = g_audio_pcm_us.load();
+  const uint32_t load_x10 = pcm_us
+      ? static_cast<uint32_t>((static_cast<uint64_t>(work_us) * 1000) / pcm_us)
+      : 0;
+  send_ble("PERF|" + std::to_string(load_x10) + '|' +
+           std::to_string(g_audio_max_frame_us.load()) + '|' +
+           std::to_string(g_audio_short_writes.load()) + '|' +
+           std::to_string(g_audio_frames.load()));
+}
+
 void send_tracks() {
   send_ble("TRACKS_BEGIN|" + std::to_string(g_tracks.size()));
   for (size_t i = 0; i < g_tracks.size(); ++i) {
@@ -324,7 +341,10 @@ bool configure_i2s(uint32_t sample_rate) {
   i2s_std_clk_config_t clock = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate);
   clock.mclk_multiple = I2S_MCLK_MULTIPLE_256;
   if (i2s_channel_reconfig_std_clock(g_i2s_tx, &clock) != ESP_OK) return false;
-  if (!g_amplifier->begin(sample_rate)) return false;
+  // The I2S data plane is independent of the amplifier's I2C control plane.
+  // Keep DMA running if the shared I2C rail is temporarily unavailable; the
+  // codec may already retain a valid configuration from an earlier start.
+  if (!g_amplifier->begin(sample_rate)) ESP_LOGW(kTag, "amplifier control unavailable");
   return i2s_channel_enable(g_i2s_tx) == ESP_OK;
 }
 
@@ -408,6 +428,11 @@ void audio_task(void*) {
     bool configured = false;
     bool interrupted = false;
     g_audio_playing = true;
+    g_audio_work_us = 0;
+    g_audio_pcm_us = 0;
+    g_audio_max_frame_us = 0;
+    g_audio_frames = 0;
+    g_audio_short_writes = 0;
 
     while (g_audio_playing) {
       AudioRequest replacement;
@@ -429,6 +454,7 @@ void audio_task(void*) {
 
       size_t consumed = 0;
       size_t samples = 0;
+      const int64_t frame_started_us = esp_timer_get_time();
       const auto result = decoder.decode(input + offset, valid - offset,
                                          reinterpret_cast<uint8_t*>(pcm),
                                          micro_mp3::MP3_MIN_OUTPUT_BUFFER_BYTES,
@@ -473,13 +499,40 @@ void audio_task(void*) {
             pcm[i] = static_cast<int16_t>((static_cast<int32_t>(pcm[i]) * volume) / 100);
           }
         }
+        const uint32_t frame_work_us = static_cast<uint32_t>(
+            esp_timer_get_time() - frame_started_us);
+        const uint32_t frame_pcm_us = decoder.get_sample_rate()
+            ? static_cast<uint32_t>((static_cast<uint64_t>(samples) * 1000000) /
+                                    decoder.get_sample_rate())
+            : 0;
+        g_audio_work_us.fetch_add(frame_work_us, std::memory_order_relaxed);
+        g_audio_pcm_us.fetch_add(frame_pcm_us, std::memory_order_relaxed);
+        g_audio_frames.fetch_add(1, std::memory_order_relaxed);
+        uint32_t previous_max = g_audio_max_frame_us.load(std::memory_order_relaxed);
+        while (frame_work_us > previous_max &&
+               !g_audio_max_frame_us.compare_exchange_weak(previous_max, frame_work_us,
+                                                            std::memory_order_relaxed)) {}
         size_t written = 0;
-        i2s_channel_write(g_i2s_tx, pcm, values * sizeof(int16_t), &written,
-                          pdMS_TO_TICKS(100));
+        const size_t bytes = values * sizeof(int16_t);
+        const esp_err_t write_result = i2s_channel_write(
+            g_i2s_tx, pcm, bytes, &written, pdMS_TO_TICKS(100));
+        if (write_result != ESP_OK || written != bytes) {
+          g_audio_short_writes.fetch_add(1, std::memory_order_relaxed);
+        }
       }
     }
     if (file) std::fclose(file);
     g_audio_playing = false;
+    const uint32_t pcm_us = g_audio_pcm_us.load();
+    const uint32_t load_x10 = pcm_us
+        ? static_cast<uint32_t>((static_cast<uint64_t>(g_audio_work_us.load()) * 1000) / pcm_us)
+        : 0;
+    ESP_LOGI(kTag, "audio perf: load=%lu.%lu%% max_frame=%lu us short_writes=%lu frames=%lu",
+             static_cast<unsigned long>(load_x10 / 10),
+             static_cast<unsigned long>(load_x10 % 10),
+             static_cast<unsigned long>(g_audio_max_frame_us.load()),
+             static_cast<unsigned long>(g_audio_short_writes.load()),
+             static_cast<unsigned long>(g_audio_frames.load()));
     if (interrupted) {
       xQueueOverwrite(g_audio_queue, &request);
     } else if (g_card_playback) {
@@ -593,6 +646,8 @@ void handle_command(std::string command) {
     send_mappings();
   } else if (command == "VOLUME") {
     send_volume();
+  } else if (command == "PERF") {
+    send_performance();
   } else if (starts_with(command, "VOLUME|")) {
     char* end = nullptr;
     const long requested = std::strtol(command.substr(7).c_str(), &end, 10);
