@@ -5,6 +5,9 @@
 
 class Pn532Mini {
  public:
+  static constexpr uint8_t kMinUidLength = 3;
+  static constexpr uint8_t kMaxUidLength = 10;
+
   explicit Pn532Mini(TwoWire &wire) : wire_(wire) {}
   void begin() {}
 
@@ -36,7 +39,7 @@ class Pn532Mini {
                                 sizeof(reply), timeout);
     if (length < 7 || reply[0] != 1) return false;
     const uint8_t lengthFromCard = reply[5];
-    if (lengthFromCard == 0 || lengthFromCard > 10 ||
+    if (lengthFromCard < kMinUidLength || lengthFromCard > kMaxUidLength ||
         6 + lengthFromCard > length) return false;
     *uidLength = lengthFromCard;
     memcpy(uid, reply + 6, lengthFromCard);

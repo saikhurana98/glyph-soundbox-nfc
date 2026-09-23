@@ -28,29 +28,21 @@ bool addressResponds(uint8_t address) {
   return Wire.endTransmission() == 0;
 }
 
-bool probeOrientation(uint8_t sda, uint8_t scl, const char *label) {
-  Wire.end();
-  delay(20);
-  Wire.begin(sda, scl, 100000);
-  delay(20);
-  const int sdaLevel = digitalRead(sda);
-  const int sclLevel = digitalRead(scl);
-  const bool acknowledged = addressResponds(kPn532Address);
-  Serial.printf("BUS %s | SDA GPIO%u=%s | SCL GPIO%u=%s | 0x24=%s\n",
-                label, sda, sdaLevel ? "HIGH" : "LOW", scl,
-                sclLevel ? "HIGH" : "LOW", acknowledged ? "ACK" : "NO ACK");
-  return acknowledged;
-}
-
 void scanAndInitialize() {
-  bool acknowledged = probeOrientation(kSda, kScl, "normal");
-  if (!acknowledged) acknowledged = probeOrientation(kScl, kSda, "swapped");
-  if (!acknowledged) {
+  Serial.print("I2C scan:");
+  bool foundAny = false;
+  for (uint8_t address = 1; address < 127; ++address) {
+    if (addressResponds(address)) {
+      foundAny = true;
+      Serial.printf(" 0x%02X", address);
+    }
+  }
+  if (!foundAny) Serial.print(" no devices");
+  Serial.println();
+
+  if (!addressResponds(kPn532Address)) {
     readerReady = false;
-    // Leave the bus in the documented orientation for the next retry.
-    Wire.end();
-    Wire.begin(kSda, kScl, 100000);
-    Serial.println("PN532 FAIL: powered but no I2C ACK in either wire orientation; verify I2C mode selection.");
+    Serial.println("PN532 FAIL: address 0x24 is not acknowledging. Check power, ground, SDA/SCL and I2C mode switches.");
     return;
   }
 
@@ -74,6 +66,7 @@ void setup() {
   delay(2000);
   Serial.println("\n=== GLYPH PN532 CARD DIAGNOSTIC ===");
   Serial.println("Pins: SDA=4 SCL=5, expected PN532 I2C address=0x24");
+  Serial.println("Accepted UID lengths: 3 through 10 bytes (including 4-byte cards)");
   Wire.setBufferSize(300);
   Wire.begin(kSda, kScl, 100000);
   nfc.begin();
@@ -83,7 +76,7 @@ void setup() {
 void loop() {
   const uint32_t now = millis();
   if (!readerReady) {
-    if (now - lastScanAt >= 1000) {
+    if (now - lastScanAt >= 1500) {
       lastScanAt = now;
       scanAndInitialize();
     }
