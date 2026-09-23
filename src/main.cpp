@@ -105,6 +105,7 @@ std::atomic<bool> g_upload_active{false};
 std::atomic<bool> g_ble_connected{false};
 std::atomic<bool> g_sd_ready{false};
 std::atomic<bool> g_nfc_ready{false};
+std::atomic<uint8_t> g_volume{75};
 
 FILE* g_upload_file = nullptr;
 std::string g_upload_name;
@@ -280,6 +281,10 @@ void send_status() {
            (g_nfc_ready ? "NFC_OK" : "NFC_ERROR") + '|' +
            std::to_string(g_tracks.size()) + '|' +
            (g_active_uid.empty() ? "NO_CARD" : g_active_uid));
+}
+
+void send_volume() {
+  send_ble("VOLUME|" + std::to_string(g_volume.load()));
 }
 
 void send_tracks() {
@@ -460,6 +465,14 @@ void audio_task(void*) {
           }
           values = samples * 2;
         }
+        const uint8_t volume = g_volume.load(std::memory_order_relaxed);
+        if (volume == 0) {
+          std::memset(pcm, 0, values * sizeof(int16_t));
+        } else if (volume < 100) {
+          for (size_t i = 0; i < values; ++i) {
+            pcm[i] = static_cast<int16_t>((static_cast<int32_t>(pcm[i]) * volume) / 100);
+          }
+        }
         size_t written = 0;
         i2s_channel_write(g_i2s_tx, pcm, values * sizeof(int16_t), &written,
                           pdMS_TO_TICKS(100));
@@ -578,6 +591,18 @@ void handle_command(std::string command) {
     send_tracks();
   } else if (command == "MAPS") {
     send_mappings();
+  } else if (command == "VOLUME") {
+    send_volume();
+  } else if (starts_with(command, "VOLUME|")) {
+    char* end = nullptr;
+    const long requested = std::strtol(command.substr(7).c_str(), &end, 10);
+    if (*end != '\0' || requested < 0 || requested > 100) {
+      return send_ble("ERROR|VOLUME_RANGE");
+    }
+    g_volume = static_cast<uint8_t>(requested);
+    nvs_set_u8(g_nvs, "volume", g_volume.load());
+    nvs_commit(g_nvs);
+    send_volume();
   } else if (starts_with(command, "UPLOAD_BEGIN|")) {
     const size_t pipe = command.find_last_of('|');
     if (pipe <= 13) return send_ble("ERROR|UPLOAD_FORMAT");
@@ -871,6 +896,10 @@ extern "C" void app_main() {
   }
   ESP_ERROR_CHECK(nvs_result);
   ESP_ERROR_CHECK(nvs_open("yotopoc", NVS_READWRITE, &g_nvs));
+  uint8_t saved_volume = 75;
+  if (nvs_get_u8(g_nvs, "volume", &saved_volume) == ESP_OK && saved_volume <= 100) {
+    g_volume = saved_volume;
+  }
 
   g_audio_queue = xQueueCreate(1, sizeof(AudioRequest));
   g_ble_queue = xQueueCreate(32, sizeof(BlePacket));

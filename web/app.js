@@ -137,7 +137,7 @@ async function connect() {
   setConnected(true);
   $("#deviceStatus").textContent = device.name || "Glyph Soundbox";
   activity("Connected. Loading cards and SD tracks…");
-  for (const command of ["HELLO", "STATUS", "TRACKS", "MAPS"]) await send(command);
+  for (const command of ["HELLO", "STATUS", "VOLUME", "TRACKS", "MAPS"]) await send(command);
 }
 
 function csvToPlaylist(csv) {
@@ -196,6 +196,10 @@ function onEvent(event) {
   else if (type === "STATUS") {
     $("#deviceStatus").textContent = `${parts[0]} · ${parts[1]} · ${parts[2]} MP3 track(s)`;
     if (parts[3] && parts[3] !== "NO_CARD") currentUid = parts[3];
+  } else if (type === "VOLUME") {
+    const volume = Math.max(0, Math.min(100, Number(parts[0]) || 0));
+    $("#volumeSlider").value = volume;
+    $("#volumeValue").value = `${volume}%`;
   } else if (type === "ERROR") activity(`Player error: ${parts.join(" ").replaceAll("_", " ")}`);
   updateActions();
 }
@@ -269,6 +273,7 @@ function updateActions() {
   $("#clearButton").disabled = !online || uploadBusy || !currentUid;
   $("#playButton").disabled = !online || uploadBusy || !currentUid || !currentPlaylist.length;
   $("#pauseButton").disabled = !online || uploadBusy;
+  $("#volumeSlider").disabled = !online || uploadBusy;
   $("#uploadButton").disabled = !online || uploadBusy || !$("#uploadInput").files.length;
 }
 
@@ -280,6 +285,8 @@ $("#refreshButton").addEventListener("click", async () => {
 $("#cardSelect").addEventListener("change", (event) => { if (event.target.value) selectCard(event.target.value); });
 $("#playButton").addEventListener("click", () => send("PLAY").catch((error) => activity(error.message)));
 $("#pauseButton").addEventListener("click", () => send("PAUSE").catch((error) => activity(error.message)));
+$("#volumeSlider").addEventListener("input", (event) => { $("#volumeValue").value = `${event.target.value}%`; });
+$("#volumeSlider").addEventListener("change", (event) => send(`VOLUME|${event.target.value}`).catch((error) => activity(error.message)));
 $("#saveButton").addEventListener("click", () => send(`MAP|${currentUid}|${currentPlaylist.join(",")}`).catch((error) => activity(error.message)));
 $("#clearButton").addEventListener("click", () => send(`CLEAR|${currentUid}`).catch((error) => activity(error.message)));
 $("#uploadInput").addEventListener("change", () => {

@@ -27,7 +27,10 @@
     </section>
     <section class="card player-controls">
       <div><div class="label">PLAYBACK</div><div id="nowPlaying">Nothing playing</div></div>
-      <div class="transport"><button id="playButton" class="primary" disabled>▶ Play playlist</button><button id="pauseButton" class="ghost" disabled>Ⅱ Pause</button></div>
+      <div class="player-actions">
+        <label class="volume-control" for="volumeSlider"><span>VOLUME</span><output id="volumeValue" for="volumeSlider">75%</output><input id="volumeSlider" type="range" min="0" max="100" step="1" value="75" disabled></label>
+        <div class="transport"><button id="playButton" class="primary" disabled>▶ Play playlist</button><button id="pauseButton" class="ghost" disabled>Ⅱ Pause</button></div>
+      </div>
     </section>
     <section class="workspace">
       <div class="card library-panel">

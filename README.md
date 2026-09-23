@@ -10,6 +10,7 @@ A proof of concept that turns the [PCB Cupid G-Kit Soundbox](https://learn.pcbcu
 - Playback while the card is present and pause when it is removed
 - Per-card playlist position and elapsed time stored in ESP32 NVS
 - BLE configuration from an installable Web Bluetooth PWA
+- Persistent 0–100% master volume control from the PWA
 - Native ESP-IDF audio path using I2S DMA, SDSPI, NimBLE, and dedicated FreeRTOS tasks
 - First-tap convenience: an unmapped card initially maps to every MP3 on the SD card
 
