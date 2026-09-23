@@ -23,7 +23,7 @@ constexpr uint8_t kI2sBclk = 14;
 constexpr uint8_t kI2sWs = 18;
 constexpr uint8_t kI2sDout = 15;
 constexpr uint32_t kNfcPollMs = 90;
-constexpr uint32_t kCardRemovalMs = 450;
+constexpr uint32_t kNfcReconnectMs = 2000;
 constexpr size_t kMaxPlaylistTracks = 32;
 
 constexpr char kBleDeviceName[] = "Glyph Soundbox";
@@ -64,7 +64,6 @@ Playlist activePlaylist;
 uint8_t activePlaylistPosition = 0;
 uint32_t resumeBaseSeconds = 0;
 uint32_t trackStartedAt = 0;
-uint32_t lastCardSeenAt = 0;
 bool cardPlaybackActive = false;
 bool sdReady = false;
 bool nfcReady = false;
@@ -117,6 +116,25 @@ void rememberUid(const String &uid) {
   prefs.putString("uids", all);
   prefs.putString(preferenceKey('u', uid).c_str(), uid);
 }
+
+String cardLabel(const String &uid) {
+  const String all = prefs.getString("uids", "");
+  int start = 0;
+  int number = 1;
+  while (start < static_cast<int>(all.length())) {
+    int end = all.indexOf(',', start);
+    if (end < 0) end = all.length();
+    if (all.substring(start, end) == uid) return "Card " + String(number);
+    start = end + 1;
+    ++number;
+  }
+  return "Card " + String(number);
+}
+
+void selectCard(const String &uid);
+void playSelectedCard();
+void pausePlayback();
+void playTrackFromWeb(int trackIndex);
 
 String playlistToCsv(const Playlist &playlist) {
   String csv;
@@ -207,7 +225,8 @@ void sendMappings() {
     const String uid = all.substring(start, end);
     if (!uid.isEmpty()) {
       sendBle("MAP|" + uid + '|' +
-              prefs.getString(preferenceKey('m', uid).c_str(), ""));
+              prefs.getString(preferenceKey('m', uid).c_str(), "") + '|' +
+              cardLabel(uid));
     }
     start = end + 1;
   }
@@ -218,13 +237,23 @@ void handleBleCommand(String command) {
   command.trim();
   Serial.printf("BLE< %s\n", command.c_str());
   if (command == "HELLO") {
-    sendBle("INFO|Glyph Soundbox|0.1.0");
+    sendBle("INFO|Glyph Soundbox|0.2.0");
   } else if (command == "STATUS") {
     sendStatus();
   } else if (command == "TRACKS") {
     sendTracks();
   } else if (command == "MAPS") {
     sendMappings();
+  } else if (command == "PLAY") {
+    playSelectedCard();
+  } else if (command == "PAUSE") {
+    pausePlayback();
+  } else if (command.startsWith("PLAY_TRACK|")) {
+    playTrackFromWeb(command.substring(11).toInt());
+  } else if (command.startsWith("SELECT|")) {
+    String uid = command.substring(7);
+    uid.toUpperCase();
+    if (uidIsKnown(uid)) selectCard(uid);
   } else if (command.startsWith("MAP|")) {
     const int secondPipe = command.indexOf('|', 4);
     if (secondPipe < 0) return sendBle("ERROR|MAP_FORMAT");
@@ -233,6 +262,7 @@ void handleBleCommand(String command) {
     const Playlist playlist = parsePlaylist(command.substring(secondPipe + 1));
     if (uid.isEmpty() || playlist.count == 0) return sendBle("ERROR|EMPTY_MAP");
     savePlaylist(uid, playlist);
+    if (uid == activeUid) activePlaylist = playlist;
     sendBle("SAVED|" + uid + '|' + playlistToCsv(playlist));
   } else if (command.startsWith("CLEAR|")) {
     String uid = command.substring(6);
@@ -281,13 +311,6 @@ void beginBle() {
   advertising->setName(kBleDeviceName);
   advertising->start();
   Serial.println("BLE advertising as 'Glyph Soundbox'");
-}
-
-Playlist defaultPlaylist() {
-  Playlist playlist;
-  const int count = std::min(player->trackCount(), static_cast<int>(kMaxPlaylistTracks));
-  for (int i = 0; i < count; ++i) playlist.tracks[playlist.count++] = i;
-  return playlist;
 }
 
 bool seekPlayerToSecondsLocked(uint32_t seconds) {
@@ -345,21 +368,43 @@ void advancePlaylistLocked() {
   playPlaylistPositionLocked(activePlaylistPosition, 0);
 }
 
-void startCard(const String &uid) {
+void pausePlayback() {
+  if (xSemaphoreTake(playerMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+    uint32_t elapsed = resumeBaseSeconds;
+    if (cardPlaybackActive && !activeUid.isEmpty()) {
+      elapsed += (millis() - trackStartedAt) / 1000;
+      saveResume(activeUid, activePlaylistPosition, elapsed);
+    }
+    if (player->audioPlayer() != nullptr) player->audioPlayer()->stop();
+    cardPlaybackActive = false;
+    xSemaphoreGive(playerMutex);
+    Serial.printf("Playback paused at item %u, %lu sec\n",
+                  activePlaylistPosition + 1, static_cast<unsigned long>(elapsed));
+    sendBle("PAUSED|" + activeUid + '|' + String(activePlaylistPosition) + '|' +
+            String(elapsed));
+  }
+}
+
+void selectCard(const String &uid) {
+  if (uid.isEmpty()) return;
+  if (player->audioPlayer() != nullptr && player->audioPlayer()->isActive()) {
+    pausePlayback();
+  }
+  rememberUid(uid);
   activeUid = uid;
   activePlaylist = loadPlaylist(uid);
-  if (activePlaylist.count == 0 && player->trackCount() > 0) {
-    activePlaylist = defaultPlaylist();
-    savePlaylist(uid, activePlaylist);
-    sendBle("AUTO_MAPPED|" + uid + '|' + playlistToCsv(activePlaylist));
-  }
-  sendBle("CARD|" + uid);
-  Serial.printf("Card present: %s\n", uid.c_str());
-  if (activePlaylist.count == 0) {
-    sendBle("UNMAPPED|" + uid);
-    return;
-  }
-  ResumeState resume = loadResume(uid);
+  activePlaylistPosition = 0;
+  resumeBaseSeconds = 0;
+  Serial.printf("Selected %s: %s\n", cardLabel(uid).c_str(), uid.c_str());
+  sendBle("CARD|" + uid + '|' + cardLabel(uid));
+  if (activePlaylist.count == 0) sendBle("UNMAPPED|" + uid);
+}
+
+void playSelectedCard() {
+  if (activeUid.isEmpty()) return sendBle("ERROR|SELECT_A_CARD");
+  activePlaylist = loadPlaylist(activeUid);
+  if (activePlaylist.count == 0) return sendBle("ERROR|MAP_A_PLAYLIST");
+  ResumeState resume = loadResume(activeUid);
   if (resume.playlistPosition >= activePlaylist.count) resume = {};
   if (xSemaphoreTake(playerMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
     cardPlaybackActive = true;
@@ -370,25 +415,30 @@ void startCard(const String &uid) {
   }
 }
 
-void stopCard() {
-  if (activeUid.isEmpty()) return;
-  const String removedUid = activeUid;
-  if (xSemaphoreTake(playerMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
-    cardPlaybackActive = false;
-    const uint32_t elapsed = resumeBaseSeconds + (millis() - trackStartedAt) / 1000;
-    saveResume(removedUid, activePlaylistPosition, elapsed);
-    if (player->audioPlayer() != nullptr) player->audioPlayer()->stop();
-    xSemaphoreGive(playerMutex);
-    Serial.printf("Card removed: %s, saved item %u at %lu sec\n",
-                  removedUid.c_str(), activePlaylistPosition + 1,
-                  static_cast<unsigned long>(elapsed));
-    sendBle("STOPPED|" + removedUid + '|' + String(activePlaylistPosition) + '|' +
-            String(elapsed));
+void playTrackFromWeb(int trackIndex) {
+  if (trackIndex < 0 || trackIndex >= player->trackCount()) {
+    return sendBle("ERROR|TRACK_INDEX");
   }
-  activeUid = "";
-  activePlaylist = {};
-  activePlaylistPosition = 0;
-  resumeBaseSeconds = 0;
+  if (xSemaphoreTake(playerMutex, pdMS_TO_TICKS(500)) != pdTRUE) return;
+  cardPlaybackActive = false;
+  AudioPlayer *core = player->audioPlayer();
+  if (core == nullptr) {
+    xSemaphoreGive(playerMutex);
+    return sendBle("ERROR|AUDIO_NOT_READY");
+  }
+  String path = player->getTrackNameAt(trackIndex);
+  while (path.startsWith("//")) path.remove(0, 1);
+  player->trackIndex = trackIndex;
+  core->stop();
+  const bool opened = core->setPath(path.c_str());
+  if (opened) core->play();
+  xSemaphoreGive(playerMutex);
+  if (opened) {
+    Serial.printf("Web preview: %s\n", path.c_str());
+    sendBle("PLAYING_TRACK|" + String(trackIndex));
+  } else {
+    sendBle("ERROR|OPEN_TRACK");
+  }
 }
 
 void audioTask(void *) {
@@ -405,23 +455,39 @@ void audioTask(void *) {
   }
 }
 
+bool initializeNfc() {
+  const uint32_t version = nfc.getFirmwareVersion();
+  if (version == 0) return false;
+  nfc.SAMConfig();
+  nfc.setPassiveActivationRetries(0x01);
+  Serial.printf("PN532 ready, firmware %lu.%lu\n", (version >> 16) & 0xFF,
+                (version >> 8) & 0xFF);
+  return true;
+}
+
 void pollNfc() {
   static uint32_t lastPollAt = 0;
+  static uint32_t lastReconnectAt = 0;
   const uint32_t now = millis();
-  if (!nfcReady || now - lastPollAt < kNfcPollMs) return;
+  if (!nfcReady) {
+    if (now - lastReconnectAt >= kNfcReconnectMs) {
+      lastReconnectAt = now;
+      nfcReady = initializeNfc();
+      if (nfcReady) {
+        Serial.println("PN532 recovered after startup");
+        sendStatus();
+      }
+    }
+    return;
+  }
+  if (now - lastPollAt < kNfcPollMs) return;
   lastPollAt = now;
   uint8_t uid[10]{};
   uint8_t uidLength = 0;
   const bool found = nfc.readPassiveTargetID(0x00, uid, &uidLength, 250);
   if (found) {
     const String seenUid = uidToString(uid, uidLength);
-    lastCardSeenAt = now;
-    if (activeUid != seenUid) {
-      if (!activeUid.isEmpty()) stopCard();
-      startCard(seenUid);
-    }
-  } else if (!activeUid.isEmpty() && now - lastCardSeenAt >= kCardRemovalMs) {
-    stopCard();
+    if (seenUid != activeUid) selectCard(seenUid);
   }
 }
 
@@ -441,23 +507,15 @@ void scanI2c() {
 void setup() {
   Serial.begin(115200);
   delay(3500);  // Leave time for USB CDC and a serial monitor to attach.
-  Serial.println("\n=== Glyph Soundbox NFC + BLE POC 0.1.0 ===");
+  Serial.println("\n=== Glyph Soundbox NFC + BLE POC 0.2.0 ===");
   prefs.begin("yotopoc", false);
   playerMutex = xSemaphoreCreateMutex();
   Wire.setBufferSize(300);
   Wire.begin(kI2cSda, kI2cScl, 100000);
   nfc.begin();
   scanI2c();
-  const uint32_t pn532Version = nfc.getFirmwareVersion();
-  nfcReady = pn532Version != 0;
-  if (nfcReady) {
-    nfc.SAMConfig();
-    nfc.setPassiveActivationRetries(0x01);
-    Serial.printf("PN532 ready, firmware %lu.%lu\n", (pn532Version >> 16) & 0xFF,
-                  (pn532Version >> 8) & 0xFF);
-  } else {
-    Serial.println("ERROR: PN532 not found at I2C address 0x24");
-  }
+  nfcReady = initializeNfc();
+  if (!nfcReady) Serial.println("ERROR: PN532 not found; retrying every 2 seconds");
   beginBle();
   Serial.println("Starting Soundbox audio player...");
   player = new AUDIO_PLAYER(Wire, playerConfig);

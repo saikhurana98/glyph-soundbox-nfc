@@ -15,15 +15,19 @@
     <header>
       <div class="eyebrow">GLYPH SOUNDBOX · POC</div>
       <h1>Make a card<br>play a world.</h1>
-      <p class="lede">Tap a card on the player, choose its SD-card tracks, and put them in the right order.</p>
+      <p class="lede">Tap a card to select it, build its playlist, then use the player controls when you want music.</p>
     </header>
     <section class="connection card">
       <div><span id="statusDot" class="dot"></span><strong id="connectionStatus">Not connected</strong><p id="deviceStatus">Use Chrome or Edge with Bluetooth enabled.</p></div>
       <button id="connectButton" class="primary">Connect player</button>
     </section>
     <section class="card card-id">
-      <div><div class="label">ACTIVE CARD</div><div id="cardUid" class="uid">Tap a card…</div></div>
+      <div class="card-picker"><div class="label">SELECTED CARD</div><select id="cardSelect" disabled><option value="">Tap a card…</option></select><div id="cardUid" class="uid">No card selected</div></div>
       <button id="refreshButton" class="ghost" disabled>Refresh library</button>
+    </section>
+    <section class="card player-controls">
+      <div><div class="label">PLAYBACK</div><div id="nowPlaying">Nothing playing</div></div>
+      <div class="transport"><button id="playButton" class="primary" disabled>▶ Play playlist</button><button id="pauseButton" class="ghost" disabled>Ⅱ Pause</button></div>
     </section>
     <section class="workspace">
       <div class="card library-panel">
@@ -38,9 +42,8 @@
     </section>
     <section class="card activity-card"><div class="label">PLAYER ACTIVITY</div><div id="activity">Waiting for a connection.</div></section>
   </main>
-  <template id="libraryItemTemplate"><button class="track library-track"><span class="track-index"></span><span class="track-name"></span><span class="add">＋</span></button></template>
+  <template id="libraryItemTemplate"><div class="track library-track"><span class="track-index"></span><span class="track-name"></span><div class="track-actions"><button class="preview" aria-label="Play track">▶</button><button class="add" aria-label="Add to playlist">＋</button></div></div></template>
   <template id="playlistItemTemplate"><div class="track playlist-track"><span class="drag">⋮⋮</span><span class="track-name"></span><div class="reorder"><button class="up" aria-label="Move up">↑</button><button class="down" aria-label="Move down">↓</button><button class="remove" aria-label="Remove">×</button></div></div></template>
   <script src="app.js" type="module"></script>
 </body>
 </html>
-
